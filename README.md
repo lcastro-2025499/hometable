@@ -58,7 +58,7 @@ pnpm exec tsc --noEmit   # comprobación de tipos
 La aplicación está desplegada en **Vercel** (plan Hobby):
 
 - URL de producción: <https://hometable-tasks.vercel.app>
-- Repositorio: `lcastro-2025499/hometable` (privado).
+- Repositorio: `lcastro-2025499/hometable` (público).
 - Cada `push` a la rama `master` genera un despliegue automático.
 - No requiere variables de entorno ni servicios externos.
 - El proyecto usa Node 22 (`.nvmrc`) y pnpm (campo `packageManager`).
@@ -121,3 +121,9 @@ interface Task {
 
 - Los datos viven en el navegador: no hay cuentas ni sincronización entre dispositivos.
 - Limpiar los datos del sitio elimina el tablero; conviene exportar una copia.
+
+## Licencia
+
+Distribuido bajo la licencia **MIT**. Puedes usar, copiar, modificar y redistribuir el código siempre que conserves el aviso de autoría. Consulta [LICENSE](LICENSE) para el texto completo.
+
+Este es un proyecto personal con fines de demostración; no incluye garantías ni soporte.
