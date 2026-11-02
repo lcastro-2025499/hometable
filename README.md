@@ -50,7 +50,7 @@ pnpm dev      # servidor de desarrollo
 pnpm build    # compilación de producción
 pnpm start    # servidor de producción (requiere pnpm build)
 pnpm lint     # ESLint
-pnpm exec tsc --noEmit   # comprobación de tipos
+pnpm exec next typegen && pnpm exec tsc --noEmit   # tipos de rutas y del proyecto
 ```
 
 ## Despliegue

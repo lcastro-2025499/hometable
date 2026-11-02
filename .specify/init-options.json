@@ -1,0 +1,7 @@
+{
+  "ai": "opencode",
+  "integration": "opencode",
+  "script": "ps",
+  "feature_numbering": "sequential",
+  "speckit_version": "1.2.6"
+}
