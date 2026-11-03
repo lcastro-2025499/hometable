@@ -53,6 +53,59 @@ pnpm lint     # ESLint
 pnpm exec next typegen && pnpm exec tsc --noEmit   # tipos de rutas y del proyecto
 ```
 
+## Spec-Driven Development (Spec Kit)
+
+El proyecto usa [GitHub Spec Kit](https://github.com/github/spec-kit) 1.2.6 con la metodología **Spec-Driven Development (SDD)**: antes de escribir código se acuerda qué se quiere, cómo se hará y en qué orden, y el agente implementa solo sobre esos artefactos. Así los cambios son acotados y verificables, y no se improvisa sobre el tablero.
+
+### Instalación y configuración
+
+| Elemento | Ubicación |
+| --- | --- |
+| Constitución del proyecto (autoridad principal) | `.specify/memory/constitution.md` |
+| Plantillas adaptadas a Hometable | `.specify/templates/overrides/` |
+| Comandos disponibles en OpenCode | `.opencode/commands/` |
+| Extensión `git` (ramas, hooks y commits) | `.specify/extensions/git/` |
+| Configuración de la instalación | `.specify/init-options.json`, `.specify/extensions.yml` |
+| Guía operativa para agentes | `AGENTS.md` |
+
+El CLI `specify` se instala de forma global con [uv](https://docs.astral.sh/uv/) (`uv tool install specify-cli --from git+https://github.com/github/spec-kit.git`); no es una dependencia del `package.json`.
+
+### Flujo de trabajo
+
+1. `/speckit.specify`: describe la funcionalidad y genera la especificación.
+2. `/speckit.clarify` (opcional): resuelve ambigüedades antes de diseñar.
+3. `/speckit.plan`: produce el plan técnico y la verificación constitucional.
+4. `/speckit.tasks`: divide el trabajo en tareas ordenadas por historia.
+5. `/speckit.analyze`: revisa la coherencia entre spec, plan y tareas.
+6. `/speckit.implement`: ejecuta las tareas y valida las puertas de calidad.
+
+La extensión `git` crea automáticamente la rama `NNN-nombre` antes de `/speckit.specify`; `master` permanece desplegable en Vercel. También están disponibles `/speckit.checklist`, `/speckit.constitution` y los comandos `/speckit.git.*` (feature, commit, validate, remote, initialize).
+
+### Artefactos por funcionalidad
+
+Cada funcionalidad vive en `specs/NNN-nombre/`:
+
+```text
+specs/001-nombre/
+├── spec.md          # Qué se quiere y para quién (sin código)
+├── plan.md          # Cómo se hará técnicamente
+├── research.md      # Decisiones y dudas resueltas
+├── data-model.md    # Cambios de modelo, persistencia y migración
+├── quickstart.md    # Pasos de prueba manual
+├── tasks.md         # Tareas ordenadas por historia
+└── contracts/       # Solo si hay formatos externos relevantes
+```
+
+### Reglas y puertas de calidad
+
+- La UI y todos los documentos SDD se escriben en español.
+- Es una SPA sin backend: la persistencia es `localStorage` (`taskboard:v1`), sin cuentas ni sincronización entre dispositivos.
+- Se reutilizan `src/components/ui/`, `src/lib/task-utils.ts` y `src/store/task-store.ts` antes de crear alternativas.
+- Toda entrega debe superar `pnpm lint`, `pnpm exec next typegen` + `pnpm exec tsc --noEmit`, `pnpm build` y el QA manual descrito en el plan.
+- Los commits siguen el estilo Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`).
+
+> **Mantenimiento:** `specify integration status` reporta dos archivos gestionados modificados a propósito: `.specify/scripts/powershell/common.ps1` (fuerza UTF-8 en Windows para no corromper tildes y eñes) y `.specify/.gitignore` (ignora la caché de extensiones). No ejecutes `specify integration upgrade --force` sin volver a aplicar el fix de UTF-8.
+
 ## Despliegue
 
 La aplicación está desplegada en **Vercel** (plan Hobby):
