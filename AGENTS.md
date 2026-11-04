@@ -26,7 +26,12 @@ Reglas del proyecto:
   adaptadas a Hometable; no edites las plantillas core de `.specify/templates/`.
 - La UI y todos los documentos SDD se escriben en español.
 - El producto es una SPA sin backend: persistencia en `localStorage`
-  (`taskboard:v1`), sin cuentas ni sincronización entre dispositivos.
+  (`taskboard:v2`), con sincronización multi-dispositivo opcional vía Supabase.
+
+## Reglas de commits y seguridad:
+
+- **Nomenclatura de commits**: Usar formato Conventional Commits en inglés (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
+- **Seguridad**: NUNCA subir archivos sensibles (como `.env.local`) al repositorio. Asegurar siempre que estén en `.gitignore`.
 - Reutiliza `src/components/ui/`, `src/lib/task-utils.ts` y
   `src/store/task-store.ts` antes de crear alternativas.
 - Puertas obligatorias antes de integrar: `pnpm lint`, `pnpm exec next typegen` +
