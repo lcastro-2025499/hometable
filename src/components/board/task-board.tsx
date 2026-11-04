@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { DeleteTaskDialog } from "@/components/tasks/delete-task-dialog";
 import { TaskDialog } from "@/components/tasks/task-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ConnectionStatus } from "@/components/ui/connection-status";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { STATUS_META, STORAGE_KEY, TASK_STATUSES } from "@/lib/constants";
 import {
@@ -306,6 +307,7 @@ export function TaskBoard() {
             </div>
           </div>
           <BoardActions onCreate={() => openCreate("todo")} />
+          <ConnectionStatus />
           <ThemeToggle />
         </div>
       </header>
@@ -375,8 +377,7 @@ export function TaskBoard() {
       </main>
 
       <footer className="border-t px-4 py-4 text-center text-xs text-muted-foreground">
-        Tus tareas se guardan en este navegador (localStorage). Exporta una copia
-        para no perderlas.
+        Sincronizado en tiempo real con Supabase. Respaldado en localStorage.
       </footer>
 
       <TaskDialog
