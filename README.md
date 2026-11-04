@@ -15,9 +15,11 @@ Aplicación de gestión de tareas en formato **Kanban**, construida con Next.js 
 - Métricas del tablero: total, pendientes, en progreso, completadas, vencidas y progreso general.
 - Modo claro, oscuro o según el sistema.
 - Exportación e importación de copias de seguridad en JSON.
-- Sincronización entre pestañas del mismo navegador.
+- **Sincronización en tiempo real entre dispositivos** usando Supabase Realtime.
+- **Persistencia híbrida**: datos guardados en localStorage (como respaldo) y sincronizados con Supabase.
 - Diseño responsive: carrusel con ajuste por columna en móvil.
 - Accesibilidad: anuncios del arrastre en español, etiquetas ARIA y alternativa "Mover a" en el menú de cada tarjeta.
+- Indicador visual de estado de conexión en tiempo real.
 
 ## Stack
 
@@ -146,11 +148,12 @@ src/
 
 ## Persistencia
 
-- Clave de `localStorage`: `taskboard:v1`.
+- **Clave de `localStorage`**: `taskboard:v1` (usada como fallback local).
+- **Sincronización en la nube**: Se conecta a Supabase para sincronización en tiempo real entre múltiples dispositivos.
 - Solo se persisten las tareas; filtros y tema se mantienen en memoria o en `next-themes`.
 - La carga se hace después de montar el componente, mostrando un esqueleto para evitar desajustes de hidratación.
-- Si se abre la aplicación en varias pestañas, los cambios se sincronizan mediante el evento `storage`.
-- Para mover los datos a otro navegador, usa **Datos del tablero → Exportar a JSON** y luego **Importar desde JSON**.
+- Los cambios se transmiten mediante Supabase Realtime a través de WebSockets.
+- Para mover los datos a otro navegador de forma offline, usa **Datos del tablero → Exportar a JSON** y luego **Importar desde JSON**.
 
 ### Modelo de tarea
 
@@ -172,8 +175,8 @@ interface Task {
 
 ## Limitaciones
 
-- Los datos viven en el navegador: no hay cuentas ni sincronización entre dispositivos.
-- Limpiar los datos del sitio elimina el tablero; conviene exportar una copia.
+- La versión actual permite colaboración en un mismo tablero compartido vía Supabase con las credenciales configuradas en `.env.local`.
+- No hay autenticación individual por usuario ni permisos avanzados todavía (preparado para futuras versiones con betterAuth).
 
 ## Licencia
 
