@@ -103,7 +103,8 @@ export function BoardActions({ onCreate }: { onCreate: () => void }) {
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            Los datos viven solo en este navegador.
+            Se guardan en este navegador y, si está configurado, se sincronizan
+            con Supabase.
           </p>
         </DropdownMenuContent>
       </DropdownMenu>

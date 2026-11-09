@@ -377,7 +377,8 @@ export function TaskBoard() {
       </main>
 
       <footer className="border-t px-4 py-4 text-center text-xs text-muted-foreground">
-        Sincronizado en tiempo real con Supabase. Respaldado en localStorage.
+        Tus datos se guardan en este navegador. La sincronización con Supabase es
+        opcional.
       </footer>
 
       <TaskDialog
