@@ -1,6 +1,6 @@
 # Progreso del Proyecto: Hometable
 
-**Estado actual**: Autenticación con Better Auth completada y en proceso de QA.
+**Estado actual**: ✅ AUTENTICACIÓN COMPLETA - LISTO PARA PRUEBAS
 
 ---
 
@@ -26,16 +26,27 @@
 
 ---
 
-## Commits recientes
+## Commits Completados
 
-- `4390c4b` - feat(auth): implement authentication flow with Better Auth, reCAPTCHA, and password recovery
-- `abcffe8` - build(deps): add react-google-recaptcha
-- `4e58f44` - build(deps): add better-auth, resend, and pg
+1. `4390c4b` - feat(auth): implement authentication flow with Better Auth, reCAPTCHA, and password recovery
+2. `abcffe8` - build(deps): add react-google-recaptcha
+3. `4e58f44` - build(deps): add better-auth, resend, and pg
+4. `402e979` - docs: add .env.example with all required environment variables for auth
+5. `d235edc` - fix(auth): resolve registration and validation issues
 
-## Notas
+## Variables de Entorno Requeridas
 
-La aplicación requiere las siguientes variables de entorno para probar flujos reales:
-- `BETTER_AUTH_SECRET` - Secret key para Better Auth
-- `RESEND_API_KEY` - API key de Resend (gratuita)
-- `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` - Site key de Google reCAPTCHA
-- `RECAPTCHA_SECRET_KEY` - Secret key de Google reCAPTCHA
+Para probar flujos reales, asegúrate de tener en `.env.local`:
+- `BETTER_AUTH_SECRET` - Clave secreta (32+ caracteres, generada con PowerShell)
+- `DATABASE_URL` o `DIRECT_URL` - Conexión PostgreSQL Supabase
+- `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` + `RECAPTCHA_SECRET_KEY` - Google reCAPTCHA
+- `RESEND_API_KEY` - Para password reset
+- `EMAIL_FROM` - Email desde el cual se envían los correos
+
+## Pruebas a Realizar
+
+1. Registrar un nuevo usuario en `/register`
+2. Iniciar sesión en `/login`
+3. Verificar que el dashboard (`/`) requiere autenticación
+4. Probar recuperación de contraseña en `/forgot-password`
+5. Verificar que las tareas se asocian al `owner_id` del usuario
