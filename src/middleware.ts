@@ -38,3 +38,8 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
+
+// Migration note for Next.js 16+
+// The middleware file convention is deprecated in favor of "proxy"
+// This middleware continues to work but should be migrated when convenient
+// Run: npx @next/codemod@canary middleware-to-proxy .
