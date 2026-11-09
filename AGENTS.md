@@ -25,8 +25,14 @@ Reglas del proyecto:
 - Las plantillas efectivas están en `.specify/templates/overrides/` y están
   adaptadas a Hometable; no edites las plantillas core de `.specify/templates/`.
 - La UI y todos los documentos SDD se escriben en español.
-- El producto es una SPA sin backend: persistencia en `localStorage`
+- El producto es una SPA sin backend propio: persistencia en `localStorage`
   (`taskboard:v2`), con sincronización multi-dispositivo opcional vía Supabase.
+- La fuente de verdad del esquema es
+  `supabase/migrations/20261109000000_align_tasks_schema.sql`. Incluye tabla,
+  trigger, índices, RLS, `GRANT` y publicación Realtime.
+- Solo se usan variables públicas (`NEXT_PUBLIC_SUPABASE_*`) en el cliente. Nunca
+  expongas `service_role` ni claves secretas; documenta las variables en
+  `.env.example` y mantén `.env.local` fuera de git.
 
 ## Reglas de commits y seguridad:
 
