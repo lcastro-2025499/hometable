@@ -1,8 +1,9 @@
 import type { DueFilter, TaskPriority, TaskSort, TaskStatus } from "./types";
 
-export { TASK_STATUSES } from "./types";
+export { TASK_PRIORITIES, TASK_STATUSES } from "./types";
 
-export const STORAGE_KEY = "taskboard:v1";
+export const STORAGE_KEY = "taskboard:v2";
+export const LEGACY_STORAGE_KEY = "taskboard:v1";
 export const MAX_TAGS = 8;
 export const MAX_TAG_LENGTH = 24;
 
