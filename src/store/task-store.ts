@@ -4,8 +4,9 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { STORAGE_KEY } from "@/lib/constants";
 import { createExampleTasks } from "@/lib/seed";
-import { byOrder, moveTaskToColumn, normalizeOrders } from "@/lib/task-utils";
-import { supabase } from "@/lib/supabase";
+import { migrateLegacyStorage } from "@/lib/storage-migration";
+import { deleteTasks, pushTasks, replaceAllTasks } from "@/lib/supabase-sync";
+import { moveTaskToColumn, normalizeOrders } from "@/lib/task-utils";
 import type { NewTaskInput, Task, TaskStatus } from "@/lib/types";
 
 interface TaskStore {
@@ -48,122 +49,135 @@ function buildTask(input: NewTaskInput, tasks: Task[]): Task {
   };
 }
 
+function sameTask(a: Task, b: Task): boolean {
+  return (
+    a.title === b.title &&
+    a.description === b.description &&
+    a.status === b.status &&
+    a.priority === b.priority &&
+    a.dueDate === b.dueDate &&
+    a.order === b.order &&
+    a.completedAt === b.completedAt &&
+    a.createdAt === b.createdAt &&
+    a.tags.length === b.tags.length &&
+    a.tags.every((tag, index) => tag === b.tags[index])
+  );
+}
+
+/** Devuelve el siguiente estado y solo las tareas que realmente cambiaron. */
+function applyChange(
+  before: Task[],
+  next: Task[],
+): { tasks: Task[]; changed: Task[] } {
+  const timestamp = nowIso();
+  const beforeById = new Map(before.map((task) => [task.id, task]));
+  const changed: Task[] = [];
+
+  const tasks = next.map((task) => {
+    const previous = beforeById.get(task.id);
+    if (previous && sameTask(previous, task)) return task;
+
+    const stamped = { ...task, updatedAt: timestamp };
+    changed.push(stamped);
+    return stamped;
+  });
+
+  return { tasks, changed };
+}
+
+migrateLegacyStorage();
+
 export const useTaskStore = create<TaskStore>()(
   persist(
     (set, get) => ({
       tasks: [] as Task[],
 
       addTask: (input) => {
-        const task = buildTask(input, get().tasks);
-        set((state) => ({ tasks: [...state.tasks, task] }));
-        
-        // Guardar asíncronamente en Supabase
-        (supabase.from("tasks") as any)
-          .insert({
-            id: task.id,
-            title: task.title,
-            description: task.description || null,
-            status: task.status,
-            priority: task.priority,
-            due_date: task.dueDate || null,
-            tags: task.tags,
-            order: task.order,
-            created_at: task.createdAt,
-            updated_at: task.updatedAt,
-            completed_at: task.completedAt || null,
-          })
-          .then(({ error }: any) => {
-            if (error) console.error("Error guardando tarea en Supabase:", error);
-          });
+        const before = get().tasks;
+        const task = buildTask(input, before);
+
+        set({ tasks: [...before, task] });
+        void pushTasks([task]);
 
         return task;
       },
 
-      addTasks: (incoming) =>
-        set((state) => ({
-          tasks: normalizeOrders([...state.tasks, ...incoming]),
-        })),
+      addTasks: (incoming) => {
+        const before = get().tasks;
+        const next = normalizeOrders([...before, ...incoming]);
+        const { tasks, changed } = applyChange(before, next);
 
-      updateTask: (id, input) =>
-        set((state) => {
-          const current = state.tasks.find((task) => task.id === id);
-          if (!current) return state;
+        set({ tasks });
+        void pushTasks(changed);
+      },
 
-          const timestamp = nowIso();
-          const updated: Task = {
-            ...current,
-            title: input.title.trim(),
-            description: input.description?.trim() || undefined,
-            status: input.status,
-            priority: input.priority,
-            dueDate: input.dueDate || undefined,
-            tags: input.tags.map((tag) => tag.trim()).filter(Boolean),
-            updatedAt: timestamp,
-            completedAt:
-              input.status === "done"
-                ? current.status === "done"
-                  ? current.completedAt ?? timestamp
-                  : timestamp
-                : undefined,
-          };
+      updateTask: (id, input) => {
+        const before = get().tasks;
+        const current = before.find((task) => task.id === id);
+        if (!current) return;
 
-          const tasks = state.tasks.map((task) => (task.id === id ? updated : task));
-          const newTasks =
-            input.status === current.status
-              ? tasks
-              : moveTaskToColumn(tasks, id, input.status, Number.MAX_SAFE_INTEGER);
+        const timestamp = nowIso();
+        const updated: Task = {
+          ...current,
+          title: input.title.trim(),
+          description: input.description?.trim() || undefined,
+          status: input.status,
+          priority: input.priority,
+          dueDate: input.dueDate || undefined,
+          tags: input.tags.map((tag) => tag.trim()).filter(Boolean),
+          updatedAt: timestamp,
+          completedAt:
+            input.status === "done"
+              ? current.status === "done"
+                ? current.completedAt ?? timestamp
+                : timestamp
+              : undefined,
+        };
 
-          // Actualizar en Supabase
-          (supabase.from("tasks") as any)
-            .update({
-              title: updated.title,
-              description: updated.description || null,
-              status: updated.status,
-              priority: updated.priority,
-              due_date: updated.dueDate || null,
-              tags: updated.tags,
-              updated_at: updated.updatedAt,
-              completed_at: updated.completedAt || null,
-            })
-            .eq("id", id)
-            .then(({ error }: any) => {
-              if (error) console.error("Error actualizando tarea en Supabase:", error);
-            });
+        const withUpdated = before.map((task) =>
+          task.id === id ? updated : task,
+        );
+        const next =
+          input.status === current.status
+            ? withUpdated
+            : moveTaskToColumn(
+                withUpdated,
+                id,
+                input.status,
+                Number.MAX_SAFE_INTEGER,
+              );
 
-          return { tasks: newTasks };
-        }),
+        const { tasks, changed } = applyChange(before, next);
+        set({ tasks });
+        void pushTasks(changed);
+      },
 
       deleteTask: (id) => {
-        const task = get().tasks.find((item) => item.id === id);
+        const before = get().tasks;
+        const task = before.find((item) => item.id === id);
         if (!task) return undefined;
 
-        set((state) => {
-          const remaining = state.tasks.filter((item) => item.id !== id);
-          const updates = new Map<string, Task>();
-          remaining
-            .filter((item) => item.status === task.status)
-            .sort(byOrder)
-            .forEach((item, index) => {
-              updates.set(item.id, { ...item, order: index });
-            });
-          
-          const newTasks = remaining.map((item) => updates.get(item.id) ?? item);
-          
-          // Eliminar de Supabase
-          (supabase.from("tasks") as any).delete().eq("id", id).then(({ error }: any) => {
-            if (error) console.error("Error borrando tarea en Supabase:", error);
-          });
-          
-          return { tasks: newTasks };
-        });
+        const next = normalizeOrders(before.filter((item) => item.id !== id));
+        const { tasks, changed } = applyChange(before, next);
+
+        set({ tasks });
+        void deleteTasks([id]);
+        void pushTasks(changed);
 
         return task;
       },
 
-      restoreTask: (task) =>
-        set((state) => ({
-          tasks: normalizeOrders([...state.tasks, { ...task, order: Number.MAX_SAFE_INTEGER }]),
-        })),
+      restoreTask: (task) => {
+        const before = get().tasks;
+        const next = normalizeOrders([
+          ...before,
+          { ...task, order: Number.MAX_SAFE_INTEGER },
+        ]);
+        const { tasks, changed } = applyChange(before, next);
+
+        set({ tasks });
+        void pushTasks(changed);
+      },
 
       duplicateTask: (id) => {
         const original = get().tasks.find((task) => task.id === id);
@@ -180,87 +194,97 @@ export const useTaskStore = create<TaskStore>()(
           completedAt: original.status === "done" ? timestamp : undefined,
         };
 
-        set((state) => ({
-          tasks: normalizeOrders([...state.tasks, copy]),
-        }));
+        const before = get().tasks;
+        const next = normalizeOrders([...before, copy]);
+        const { tasks, changed } = applyChange(before, next);
+
+        set({ tasks });
+        void pushTasks(changed);
 
         return copy;
       },
 
-      moveTask: (id, status, index) =>
-        set((state) => {
-          const newTasks = moveTaskToColumn(
-            state.tasks,
-            id,
-            status,
-            index ?? Number.MAX_SAFE_INTEGER,
-          );
+      moveTask: (id, status, index) => {
+        const before = get().tasks;
+        const next = moveTaskToColumn(
+          before,
+          id,
+          status,
+          index ?? Number.MAX_SAFE_INTEGER,
+        );
+        const { tasks, changed } = applyChange(before, next);
 
-          // Actualizar en Supabase las tareas afectadas por el movimiento
-          const movedTask = newTasks.find((t) => t.id === id);
-          if (movedTask) {
-            (supabase.from("tasks") as any)
-              .update({
-                status: movedTask.status,
-                order: movedTask.order,
-                updated_at: nowIso(),
-              })
-              .eq("id", id)
-              .then(({ error }: any) => {
-                if (error) console.error("Error moviendo tarea en Supabase:", error);
-              });
-          }
+        set({ tasks });
+        void pushTasks(changed);
+      },
 
-          return { tasks: newTasks };
-        }),
+      setTasks: (tasks) => {
+        const before = get().tasks;
+        const next = normalizeOrders(tasks);
+        const applied = applyChange(before, next);
 
-      setTasks: (tasks) => set({ tasks }),
+        set({ tasks: applied.tasks });
+        void pushTasks(applied.changed);
+      },
 
       toggleComplete: (id) => {
         const task = get().tasks.find((item) => item.id === id);
         if (!task) return;
-        const nextStatus: TaskStatus = task.status === "done" ? "todo" : "done";
-        set((state) => ({
-          tasks: moveTaskToColumn(
-            state.tasks,
-            id,
-            nextStatus,
-            Number.MAX_SAFE_INTEGER,
-          ),
-        }));
+
+        get().moveTask(id, task.status === "done" ? "todo" : "done");
       },
 
       clearCompleted: () => {
-        const completed = get().tasks.filter((task) => task.status === "done");
+        const before = get().tasks;
+        const completed = before.filter((task) => task.status === "done");
         if (completed.length === 0) return [];
-        set((state) => ({
-          tasks: state.tasks.filter((task) => task.status !== "done"),
-        }));
+
+        const next = normalizeOrders(
+          before.filter((task) => task.status !== "done"),
+        );
+        const { tasks, changed } = applyChange(before, next);
+
+        set({ tasks });
+        void deleteTasks(completed.map((task) => task.id));
+        void pushTasks(changed);
+
         return completed;
       },
 
-      replaceAll: (tasks) => set({ tasks: normalizeOrders(tasks) }),
+      replaceAll: (tasks) => {
+        const timestamp = nowIso();
+        const normalized = normalizeOrders(tasks).map((task) => ({
+          ...task,
+          updatedAt: timestamp,
+        }));
 
-      loadExamples: () => set({ tasks: createExampleTasks() }),
-      
+        set({ tasks: normalized });
+        void replaceAllTasks(normalized);
+      },
+
+      loadExamples: () => {
+        get().replaceAll(createExampleTasks());
+      },
+
       // Sincronización con Supabase
       syncFromSupabase: (tasks) => set({ tasks: normalizeOrders(tasks) }),
-      
+
       addTaskRemote: (task) =>
         set((state) => {
-          // Evitar duplicados
-          if (state.tasks.some((t) => t.id === task.id)) return state;
+          if (state.tasks.some((item) => item.id === task.id)) return state;
           return { tasks: normalizeOrders([...state.tasks, task]) };
         }),
-      
+
       updateTaskRemote: (task) =>
         set((state) => ({
-          tasks: state.tasks.map((t) => (t.id === task.id ? task : t)),
+          tasks: state.tasks.map((item) =>
+            item.id === task.id ? task : item,
+          ),
         })),
-      
+
       deleteTaskRemote: (id) =>
         set((state) => ({
-          tasks: state.tasks.filter((t) => t.id !== id),
+          tasks: state.tasks.filter((item) => item.id !== id),
         })),
     }),
     {

@@ -1,208 +1,200 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSupabase } from './use-supabase';
 import { useTaskStore } from '@/store/task-store';
+import { flushSyncQueue, fetchRemoteTasks, pushTasks } from '@/lib/supabase-sync';
+import { reconcileTasks } from '@/lib/task-sync';
+import { rowToTask, type TaskRow } from '@/lib/task-mapper';
 import type { Task } from '@/lib/types';
 
-interface SyncStatus {
-  status: 'connecting' | 'connected' | 'disconnected' | 'error';
+export type SyncStatus =
+  | 'local'
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'error';
+
+export interface SyncState {
+  status: SyncStatus;
   lastSync: string | null;
   error: string | null;
+  localOnly: Task[];
 }
 
-export function useTasksSync() {
+export interface TasksSyncResult extends SyncState {
+  migrateLocalTasks: (tasks: Task[]) => Promise<boolean>;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Error de sincronización desconocido.';
+}
+
+export function useTasksSync(): TasksSyncResult {
   const supabase = useSupabase();
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({
-    status: 'connecting',
+  const syncFromSupabase = useTaskStore((state) => state.syncFromSupabase);
+  const addTaskRemote = useTaskStore((state) => state.addTaskRemote);
+  const updateTaskRemote = useTaskStore((state) => state.updateTaskRemote);
+  const deleteTaskRemote = useTaskStore((state) => state.deleteTaskRemote);
+
+  const [state, setState] = useState<SyncState>(() => ({
+    status: supabase ? 'connecting' : 'local',
     lastSync: null,
     error: null,
-  });
-  
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const { setTasks, addTaskRemote, updateTaskRemote, deleteTaskRemote } = useTaskStore();
-  
-  // Cargar tareas iniciales desde Supabase
-  useEffect(() => {
-    let isMounted = true;
-    
-    async function loadTasks() {
-      try {
-        const { data, error } = await supabase
-          .from('tasks')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
-        if (error) throw error;
-        
-        if (isMounted && data) {
-          const tasks: Task[] = (data as Array<{
-            id: string;
-            title: string;
-            description: string | null;
-            status: string;
-            priority: string;
-            due_date: string | null;
-            tags: string[] | null;
-            order: number;
-            created_at: string;
-            updated_at: string;
-            completed_at: string | null;
-          }>).map((row) => ({
-            id: row.id,
-            title: row.title,
-            description: row.description || undefined,
-            status: row.status as Task['status'],
-            priority: row.priority as Task['priority'],
-            dueDate: row.due_date || undefined,
-            tags: row.tags || [],
-            order: row.order,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-            completedAt: row.completed_at || undefined,
-          }));
-          
-          setTasks(tasks);
-          setSyncStatus({
-            status: 'connected',
-            lastSync: new Date().toISOString(),
-            error: null,
-          });
-        }
-      } catch (error) {
-        if (isMounted) {
-          setSyncStatus({
-            status: 'error',
-            lastSync: null,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
+    localOnly: [],
+  }));
+
+  const refresh = useCallback(async () => {
+    const client = supabase;
+
+    if (!client) {
+      setState({
+        status: 'local',
+        lastSync: null,
+        error: null,
+        localOnly: [],
+      });
+      return;
     }
-    
-    loadTasks();
-    
-    return () => {
-      isMounted = false;
-    };
-  }, [supabase, setTasks]);
-  
-  // Suscribirse a cambios en tiempo real
+
+    setState((current) => ({
+      ...current,
+      status: 'connecting',
+      error: null,
+    }));
+
+    try {
+      // Primero subimos lo que quedó pendiente para no tratar cambios propios
+      // como tareas ajenas durante la reconciliación.
+      await flushSyncQueue();
+
+      const remote = await fetchRemoteTasks();
+      const local = useTaskStore.getState().tasks;
+      const { merged, localOnly, localNewer } = reconcileTasks(local, remote);
+
+      syncFromSupabase(merged);
+
+      if (localNewer.length > 0) {
+        void pushTasks(localNewer);
+      }
+
+      setState({
+        status: 'connected',
+        lastSync: new Date().toISOString(),
+        error: null,
+        localOnly,
+      });
+    } catch (error) {
+      const online = typeof navigator === 'undefined' || navigator.onLine;
+
+      setState((current) => ({
+        ...current,
+        status: online ? 'error' : 'disconnected',
+        lastSync: null,
+        error: errorMessage(error),
+      }));
+    }
+  }, [supabase, syncFromSupabase]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
   useEffect(() => {
     if (!supabase) return;
-    
-    const channel = supabase.channel('public:tasks');
-    channelRef.current = channel;
-    
-    channel
+
+    const channel = supabase
+      .channel('public:tasks')
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'tasks',
-        },
+        { event: 'INSERT', schema: 'public', table: 'tasks' },
         (payload) => {
-          const row = payload.new as {
-            id: string;
-            title: string;
-            description: string | null;
-            status: string;
-            priority: string;
-            due_date: string | null;
-            tags: string[] | null;
-            order: number;
-            created_at: string;
-            updated_at: string;
-            completed_at: string | null;
-          };
-          const task: Task = {
-            id: row.id,
-            title: row.title,
-            description: row.description || undefined,
-            status: row.status as Task['status'],
-            priority: row.priority as Task['priority'],
-            dueDate: row.due_date || undefined,
-            tags: row.tags || [],
-            order: row.order,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-            completedAt: row.completed_at || undefined,
-          };
-          addTaskRemote(task);
-        }
+          addTaskRemote(rowToTask(payload.new as TaskRow));
+        },
       )
       .on(
         'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'tasks',
-        },
+        { event: 'UPDATE', schema: 'public', table: 'tasks' },
         (payload) => {
-          const row = payload.new as {
-            id: string;
-            title: string;
-            description: string | null;
-            status: string;
-            priority: string;
-            due_date: string | null;
-            tags: string[] | null;
-            order: number;
-            created_at: string;
-            updated_at: string;
-            completed_at: string | null;
-          };
-          const task: Task = {
-            id: row.id,
-            title: row.title,
-            description: row.description || undefined,
-            status: row.status as Task['status'],
-            priority: row.priority as Task['priority'],
-            dueDate: row.due_date || undefined,
-            tags: row.tags || [],
-            order: row.order,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-            completedAt: row.completed_at || undefined,
-          };
-          updateTaskRemote(task);
-        }
+          updateTaskRemote(rowToTask(payload.new as TaskRow));
+        },
       )
       .on(
         'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'tasks',
-        },
+        { event: 'DELETE', schema: 'public', table: 'tasks' },
         (payload) => {
-          const row = payload.old as { id: string };
-          deleteTaskRemote(row.id);
-        }
+          const row = payload.old as Partial<TaskRow>;
+          if (row.id) deleteTaskRemote(row.id);
+        },
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          setSyncStatus((prev) => ({
-            ...prev,
+          setState((current) => ({
+            ...current,
             status: 'connected',
+            lastSync: new Date().toISOString(),
             error: null,
           }));
+          void flushSyncQueue();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setSyncStatus((prev) => ({
-            ...prev,
-            status: 'error',
-            error: 'Connection error',
+          setState((current) => ({
+            ...current,
+            status: navigator.onLine ? 'error' : 'disconnected',
+            error: navigator.onLine
+              ? 'No se pudo mantener la conexión en tiempo real.'
+              : null,
           }));
         }
       });
-    
+
     return () => {
-      if (channelRef.current) {
-        channelRef.current.unsubscribe();
-      }
+      void supabase.removeChannel(channel);
     };
   }, [supabase, addTaskRemote, updateTaskRemote, deleteTaskRemote]);
-  
-  return syncStatus;
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    const handleOnline = () => {
+      void refresh();
+    };
+
+    const handleOffline = () => {
+      setState((current) => ({
+        ...current,
+        status: 'disconnected',
+        error: null,
+      }));
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [supabase, refresh]);
+
+  const migrateLocalTasks = useCallback(async (tasks: Task[]) => {
+    if (tasks.length === 0) return true;
+
+    const success = await pushTasks(tasks);
+
+    setState((current) => ({
+      ...current,
+      status: success
+        ? 'connected'
+        : typeof navigator !== 'undefined' && !navigator.onLine
+          ? 'disconnected'
+          : 'error',
+      lastSync: success ? new Date().toISOString() : current.lastSync,
+      error: success ? null : 'No se pudieron subir las tareas locales.',
+      localOnly: success ? [] : current.localOnly,
+    }));
+
+    return success;
+  }, []);
+
+  return { ...state, migrateLocalTasks };
 }
