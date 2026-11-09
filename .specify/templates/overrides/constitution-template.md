@@ -1,8 +1,9 @@
 # Constitución de Hometable
 
-Hometable es un tablero Kanban personal, sin backend, que guarda las tareas en el
-`localStorage` del navegador. Esta constitución define las reglas no negociables
-para cualquier especificación, plan o implementación.
+Hometable es un tablero Kanban que funciona con persistencia local y, de forma
+opcional, con sincronización multi-dispositivo mediante Supabase. No tiene backend
+propio. Esta constitución define las reglas no negociables para cualquier
+especificación, plan o implementación.
 
 ## Principios fundamentales
 
@@ -16,10 +17,12 @@ para cualquier especificación, plan o implementación.
 - Los cambios de modelo MUST actualizar tipos, validación, datos de ejemplo y
   pruebas manuales afectadas en la misma entrega.
 
-### II. Persistencia local como contrato explícito
+### II. Persistencia híbrida: localStorage como fallback primario
 
-- La única fuente de persistencia es `localStorage` con la clave `taskboard:v1`
-  (`src/lib/constants.ts`). No se introducirá backend, base de datos ni cuentas.
+- La persistencia base es `localStorage` con la clave `taskboard:v2`
+  (`src/lib/constants.ts`). La sincronización con Supabase es opcional y nunca
+  puede sustituir el modo local.
+- La app MUST funcionar sin variables de entorno, sin conexión y sin Supabase.
 - Solo se persisten las tareas. Filtros, orden visual y tema MUST permanecer en
   memoria o en `next-themes`.
 - Todo cambio incompatible del formato persistido MUST incluir una estrategia de

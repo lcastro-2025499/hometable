@@ -17,9 +17,9 @@ Hometable es un tablero Kanban personal que funciona completamente en el navegad
   columnas o dentro de una columna mediante arrastrar y soltar.
 - Cada tarea tiene título, descripción, prioridad, etiquetas, fecha límite y
   orden manual. El tablero muestra métricas y permite buscar, filtrar y ordenar.
-- La persistencia es local (`localStorage`, clave `taskboard:v1`); no hay
-  backend, cuentas ni sincronización entre dispositivos. Existe exportación e
-  importación de copias de seguridad en JSON.
+- La persistencia base es local (`localStorage`, clave `taskboard:v2`); la
+  sincronización multi-dispositivo con Supabase es opcional. No hay backend propio
+  ni cuentas. Existe exportación e importación de copias de seguridad en JSON.
 - La interfaz está en español, es responsive (carrusel por columna en móvil),
   soporta temas claro/oscuro/sistema y es operable con ratón, táctil y teclado.
 - Stack: Next.js 16 (App Router), React 19, TypeScript estricto, Tailwind CSS 4,
@@ -28,7 +28,9 @@ Hometable es un tablero Kanban personal que funciona completamente en el navegad
 
 Toda funcionalidad nueva MUST respetar la constitución del proyecto
 (`.specify/memory/constitution.md`) y encajar en este contexto sin introducir
-backend ni servicios externos.
+backend propio. Los servicios externos gratuitos (por ejemplo Supabase) solo se
+permiten si la constitución los autoriza y la funcionalidad sigue funcionando en
+modo local.
 
 ## Escenarios de usuario y pruebas (obligatorio)
 
@@ -123,8 +125,9 @@ especificación) y explica el impacto de cada decisión pendiente.
 - **RNF-001 (Accesibilidad)**: La funcionalidad MUST ser operable con teclado,
   anunciar los cambios relevantes con ARIA live y mantener el foco visible.
 - **RNF-002 (Persistencia)**: Los cambios MUST sobrevivir a una recarga y MUST
-  respetar el formato `taskboard:v1`; cualquier cambio incompatible requiere
-  migración documentada.
+  respetar el formato `taskboard:v2`; cualquier cambio incompatible requiere
+  migración documentada. La sincronización con Supabase es opcional y nunca puede
+  romper el modo local.
 - **RNF-003 (Responsive)**: La funcionalidad MUST funcionar en móvil, tableta y
   escritorio sin romper el carrusel por columna.
 - **RNF-004 (Rendimiento)**: La interacción MUST sentirse inmediata con cientos

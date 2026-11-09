@@ -24,8 +24,8 @@ la funcionalidad y marca lo desconocido con el marcador técnico
   `@dnd-kit/core` + `@dnd-kit/sortable`, date-fns 4 (locale `es`), sonner,
   next-themes, lucide-react, Radix UI y shadcn/ui (estilo `radix-nova`).
 - **Estilos**: Tailwind CSS 4 y tokens de `src/app/globals.css`.
-- **Almacenamiento**: `localStorage` con clave `taskboard:v1`; sin backend, sin
-  base de datos y sin servicios externos.
+- **Almacenamiento**: `localStorage` con clave `taskboard:v2` como base; Supabase
+  opcional para sincronización multi-dispositivo. Sin backend propio.
 - **Pruebas**: no hay framework automatizado. Puertas oficiales: `pnpm lint`,
   `pnpm exec next typegen` + `pnpm exec tsc --noEmit`, `pnpm build` y QA manual.
 - **Plataforma objetivo**: navegadores modernos (Chrome, Edge, Firefox, Safari)
@@ -43,15 +43,17 @@ la funcionalidad y marca lo desconocido con el marcador técnico
 
 - **I. Dominio tipado**: ¿la funcionalidad cambia `src/lib/types.ts`? Si sí, ¿se
   actualizan `validation.ts`, datos de ejemplo y pruebas manuales?
-- **II. Persistencia**: ¿el cambio altera el formato de `taskboard:v1`? Si sí,
-  ¿hay migración o nueva versión de clave documentada?
+- **II. Persistencia**: ¿el cambio altera el formato de `taskboard:v2`? Si sí,
+  ¿hay migración o nueva versión de clave documentada? ¿Sigue funcionando sin
+  Supabase?
 - **III. Accesibilidad/UI**: ¿es operable con teclado, anuncia cambios y respeta
   español, responsive y temas?
 - **IV. Componentes/fronteras**: ¿reutiliza `src/components/ui/` y mantiene
   `"use client"` solo donde hace falta?
 - **V. Verificación**: ¿el plan incluye las tres puertas y el QA manual?
-- **VI. Simplicidad**: ¿evita dependencias nuevas y mantiene el alcance sin
-  backend?
+- **VI. Alcance**: ¿evita dependencias nuevas innecesarias y mantiene el alcance
+  sin backend propio? ¿Cualquier servicio externo está autorizado por la
+  constitución y tiene fallback local?
 
 Cualquier violación MUST justificarse en la sección "Complejidad justificada" o
 rechazarse antes de continuar.

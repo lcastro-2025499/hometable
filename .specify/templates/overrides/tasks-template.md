@@ -54,8 +54,8 @@ código.
   `src/lib/constants.ts` (si aplica).
 - [ ] T006 [P] Añadir o ajustar helpers puros en `src/lib/task-utils.ts`.
 - [ ] T007 Actualizar el estado y las acciones en `src/store/task-store.ts`
-  manteniendo la compatibilidad con `localStorage` (`taskboard:v1`) o la
-  migración documentada.
+  manteniendo la compatibilidad con `localStorage` (`taskboard:v2`) o la
+  migración documentada, incluida la sincronización opcional si aplica.
 - [ ] T008 [P] Actualizar datos de ejemplo en `src/lib/seed.ts` (si el modelo
   cambia).
 

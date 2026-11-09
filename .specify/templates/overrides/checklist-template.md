@@ -51,7 +51,7 @@ no significa que la implementación esté terminada.
 ## Persistencia y datos
 
 - [ ] CHK011 ¿El requisito indica si el cambio altera el formato de
-  `taskboard:v1`?
+  `taskboard:v2`?
 - [ ] CHK012 Si el formato cambia, ¿hay una estrategia de migración o nueva
   versión de clave documentada?
 - [ ] CHK013 ¿Se especifica qué datos se persisten (solo tareas) y cuáles no
