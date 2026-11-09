@@ -26,7 +26,7 @@ export default function RegisterPage() {
 
   const form = useForm<RegisterSchema>({
     resolver: zodResolver(registerSchema),
-    mode: "onChange",
+    mode: "onSubmit", // Solo validar al enviar el formulario
     defaultValues: {
       firstName: "",
       lastName: "",
@@ -37,9 +37,11 @@ export default function RegisterPage() {
     },
   });
 
-  const { errors, isValid, isSubmitting } = form.formState;
+  const { errors } = form.formState;
 
-  const isButtonDisabled = !isValid || !recaptchaToken || loading || isSubmitting;
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isButtonDisabled = !!errors.confirmPassword || loading || isSubmitting;
 
   const onSubmit = async (values: RegisterSchema) => {
     if (!recaptchaToken) {
@@ -47,7 +49,7 @@ export default function RegisterPage() {
       return;
     }
 
-    setLoading(true);
+    setIsSubmitting(true);
     try {
       // 1. Verify reCAPTCHA token with server
       const recaptchaRes = await fetch("/api/auth/verify-recaptcha", {
@@ -61,7 +63,7 @@ export default function RegisterPage() {
         toast.error(recaptchaData.message || "Error al verificar reCAPTCHA.");
         setRecaptchaToken(null);
         setRecaptchaKey((k) => k + 1);
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
 
@@ -87,7 +89,7 @@ export default function RegisterPage() {
         toast.error(registerData.error || "Error al registrar la cuenta.");
         setRecaptchaToken(null);
         setRecaptchaKey((k) => k + 1);
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
 
@@ -96,10 +98,11 @@ export default function RegisterPage() {
       });
 
       router.push("/login");
+      setIsSubmitting(false);
     } catch (err) {
       console.error(err);
       toast.error("Ocurrió un error inesperado al registrar la cuenta.");
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -232,7 +235,7 @@ export default function RegisterPage() {
                 className="w-full mt-4"
                 disabled={isButtonDisabled}
               >
-                {loading ? <Loader2 className="size-4 animate-spin mr-2" /> : <CheckCircle2 className="size-4 mr-2" />}
+                {isSubmitting ? <Loader2 className="size-4 animate-spin mr-2" /> : <CheckCircle2 className="size-4 mr-2" />}
                 Registrarse
               </Button>
             </form>

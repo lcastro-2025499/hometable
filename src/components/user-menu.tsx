@@ -42,7 +42,7 @@ export function UserMenu() {
             <User className="size-4" />
           </div>
           <span className="hidden max-w-32 truncate text-xs font-medium sm:inline-block">
-            {user.username || user.name}
+            {(user as any)?.displayUsername || user.username || user.name}
           </span>
         </Button>
       </DropdownMenuTrigger>
