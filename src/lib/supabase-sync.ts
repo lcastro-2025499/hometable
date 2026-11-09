@@ -18,13 +18,13 @@ export function canUseSupabase(): boolean {
   return Boolean(supabase) && isOnline();
 }
 
-async function runUpsert(tasks: Task[]): Promise<void> {
+async function runUpsert(tasks: Task[], userId?: string): Promise<void> {
   if (!supabase) throw new Error("Supabase no está configurado.");
   if (tasks.length === 0) return;
 
   const { error } = await supabase
     .from("tasks")
-    .upsert(tasks.map(taskToRow), { onConflict: "id" });
+    .upsert(tasks.map((task) => taskToRow(task, userId)), { onConflict: "id" });
 
   if (error) throw error;
 }
@@ -37,10 +37,15 @@ async function runDelete(ids: string[]): Promise<void> {
   if (error) throw error;
 }
 
-async function runReplace(tasks: Task[]): Promise<void> {
+async function runReplace(tasks: Task[], userId?: string): Promise<void> {
   if (!supabase) throw new Error("Supabase no está configurado.");
 
-  const { data, error } = await supabase.from("tasks").select("id");
+  let query = supabase.from("tasks").select("id");
+  if (userId) {
+    query = query.or(`owner_id.eq.${userId},owner_id.is.null`);
+  }
+
+  const { data, error } = await query;
   if (error) throw error;
 
   const keep = new Set(tasks.map((task) => task.id));
@@ -52,14 +57,14 @@ async function runReplace(tasks: Task[]): Promise<void> {
     await runDelete(remove);
   }
 
-  await runUpsert(tasks);
+  await runUpsert(tasks, userId);
 }
 
 function logError(message: string, error: unknown): void {
   console.error(`[sync] ${message}`, error);
 }
 
-export async function pushTasks(tasks: Task[]): Promise<boolean> {
+export async function pushTasks(tasks: Task[], userId?: string): Promise<boolean> {
   if (tasks.length === 0) return true;
 
   if (!canUseSupabase()) {
@@ -68,7 +73,7 @@ export async function pushTasks(tasks: Task[]): Promise<boolean> {
   }
 
   try {
-    await runUpsert(tasks);
+    await runUpsert(tasks, userId);
     return true;
   } catch (error) {
     logError("No se pudieron guardar las tareas en Supabase.", error);
@@ -95,14 +100,14 @@ export async function deleteTasks(ids: string[]): Promise<boolean> {
   }
 }
 
-export async function replaceAllTasks(tasks: Task[]): Promise<boolean> {
+export async function replaceAllTasks(tasks: Task[], userId?: string): Promise<boolean> {
   if (!canUseSupabase()) {
     enqueueReplace(tasks);
     return false;
   }
 
   try {
-    await runReplace(tasks);
+    await runReplace(tasks, userId);
     return true;
   } catch (error) {
     logError("No se pudo reemplazar el tablero en Supabase.", error);
@@ -113,7 +118,7 @@ export async function replaceAllTasks(tasks: Task[]): Promise<boolean> {
 
 let flushing = false;
 
-export async function flushSyncQueue(): Promise<boolean> {
+export async function flushSyncQueue(userId?: string): Promise<boolean> {
   if (flushing || !canUseSupabase()) return false;
 
   flushing = true;
@@ -124,11 +129,11 @@ export async function flushSyncQueue(): Promise<boolean> {
       const operation = queue[index];
       try {
         if (operation.type === "upsert") {
-          await runUpsert([operation.task]);
+          await runUpsert([operation.task], userId);
         } else if (operation.type === "delete") {
           await runDelete([operation.id]);
         } else {
-          await runReplace(operation.tasks);
+          await runReplace(operation.tasks, userId);
         }
       } catch (error) {
         logError("No se pudo procesar la cola de sincronización.", error);
@@ -144,13 +149,15 @@ export async function flushSyncQueue(): Promise<boolean> {
   }
 }
 
-export async function fetchRemoteTasks(): Promise<Task[]> {
+export async function fetchRemoteTasks(userId?: string): Promise<Task[]> {
   if (!supabase) return [];
 
-  const { data, error } = await supabase
-    .from("tasks")
-    .select("*")
-    .order("created_at", { ascending: false });
+  let query = supabase.from("tasks").select("*");
+  if (userId) {
+    query = query.or(`owner_id.eq.${userId},owner_id.is.null`);
+  }
+
+  const { data, error } = await query.order("created_at", { ascending: false });
 
   if (error) throw error;
   return (data ?? []).map(rowToTask);

@@ -21,6 +21,7 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  ownerId?: string;
 }
 
 export interface NewTaskInput {

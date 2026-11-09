@@ -6,6 +6,7 @@ import { useTaskStore } from '@/store/task-store';
 import { flushSyncQueue, fetchRemoteTasks, pushTasks } from '@/lib/supabase-sync';
 import { reconcileTasks } from '@/lib/task-sync';
 import { rowToTask, type TaskRow } from '@/lib/task-mapper';
+import { authClient } from '@/lib/auth-client';
 import type { Task } from '@/lib/types';
 
 export type SyncStatus =
@@ -31,6 +32,14 @@ function errorMessage(error: unknown): string {
 }
 
 export function useTasksSync(): TasksSyncResult {
+  const { data: session } = authClient.useSession();
+  const userId = session?.user?.id;
+  const setUserId = useTaskStore((state) => state.setUserId);
+
+  useEffect(() => {
+    setUserId(userId);
+  }, [userId, setUserId]);
+
   const supabase = useSupabase();
   const syncFromSupabase = useTaskStore((state) => state.syncFromSupabase);
   const addTaskRemote = useTaskStore((state) => state.addTaskRemote);
@@ -64,18 +73,16 @@ export function useTasksSync(): TasksSyncResult {
     }));
 
     try {
-      // Primero subimos lo que quedó pendiente para no tratar cambios propios
-      // como tareas ajenas durante la reconciliación.
-      await flushSyncQueue();
+      await flushSyncQueue(userId);
 
-      const remote = await fetchRemoteTasks();
+      const remote = await fetchRemoteTasks(userId);
       const local = useTaskStore.getState().tasks;
       const { merged, localOnly, localNewer } = reconcileTasks(local, remote);
 
       syncFromSupabase(merged);
 
       if (localNewer.length > 0) {
-        void pushTasks(localNewer);
+        void pushTasks(localNewer, userId);
       }
 
       setState({
@@ -94,7 +101,7 @@ export function useTasksSync(): TasksSyncResult {
         error: errorMessage(error),
       }));
     }
-  }, [supabase, syncFromSupabase]);
+  }, [supabase, userId, syncFromSupabase]);
 
   useEffect(() => {
     void refresh();
@@ -135,7 +142,7 @@ export function useTasksSync(): TasksSyncResult {
             lastSync: new Date().toISOString(),
             error: null,
           }));
-          void flushSyncQueue();
+          void flushSyncQueue(userId);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setState((current) => ({
             ...current,
@@ -150,7 +157,7 @@ export function useTasksSync(): TasksSyncResult {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [supabase, addTaskRemote, updateTaskRemote, deleteTaskRemote]);
+  }, [supabase, userId, addTaskRemote, updateTaskRemote, deleteTaskRemote]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -179,7 +186,7 @@ export function useTasksSync(): TasksSyncResult {
   const migrateLocalTasks = useCallback(async (tasks: Task[]) => {
     if (tasks.length === 0) return true;
 
-    const success = await pushTasks(tasks);
+    const success = await pushTasks(tasks, userId);
 
     setState((current) => ({
       ...current,
@@ -194,7 +201,7 @@ export function useTasksSync(): TasksSyncResult {
     }));
 
     return success;
-  }, []);
+  }, [userId]);
 
   return { ...state, migrateLocalTasks };
 }

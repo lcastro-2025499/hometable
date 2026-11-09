@@ -11,6 +11,8 @@ import type { NewTaskInput, Task, TaskStatus } from "@/lib/types";
 
 interface TaskStore {
   tasks: Task[];
+  userId?: string;
+  setUserId: (userId?: string) => void;
   addTask: (input: NewTaskInput) => Task;
   addTasks: (tasks: Task[]) => void;
   updateTask: (id: string, input: NewTaskInput) => void;
@@ -32,7 +34,7 @@ interface TaskStore {
 
 const nowIso = () => new Date().toISOString();
 
-function buildTask(input: NewTaskInput, tasks: Task[]): Task {
+function buildTask(input: NewTaskInput, tasks: Task[], userId?: string): Task {
   const timestamp = nowIso();
   return {
     id: crypto.randomUUID(),
@@ -46,6 +48,7 @@ function buildTask(input: NewTaskInput, tasks: Task[]): Task {
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: input.status === "done" ? timestamp : undefined,
+    ownerId: userId,
   };
 }
 
@@ -91,28 +94,33 @@ export const useTaskStore = create<TaskStore>()(
   persist(
     (set, get) => ({
       tasks: [] as Task[],
+      userId: undefined,
+      setUserId: (userId) => set({ userId }),
 
       addTask: (input) => {
         const before = get().tasks;
-        const task = buildTask(input, before);
+        const userId = get().userId;
+        const task = buildTask(input, before, userId);
 
         set({ tasks: [...before, task] });
-        void pushTasks([task]);
+        void pushTasks([task], userId);
 
         return task;
       },
 
       addTasks: (incoming) => {
         const before = get().tasks;
+        const userId = get().userId;
         const next = normalizeOrders([...before, ...incoming]);
         const { tasks, changed } = applyChange(before, next);
 
         set({ tasks });
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
       },
 
       updateTask: (id, input) => {
         const before = get().tasks;
+        const userId = get().userId;
         const current = before.find((task) => task.id === id);
         if (!current) return;
 
@@ -132,6 +140,7 @@ export const useTaskStore = create<TaskStore>()(
                 ? current.completedAt ?? timestamp
                 : timestamp
               : undefined,
+          ownerId: current.ownerId ?? userId,
         };
 
         const withUpdated = before.map((task) =>
@@ -149,11 +158,12 @@ export const useTaskStore = create<TaskStore>()(
 
         const { tasks, changed } = applyChange(before, next);
         set({ tasks });
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
       },
 
       deleteTask: (id) => {
         const before = get().tasks;
+        const userId = get().userId;
         const task = before.find((item) => item.id === id);
         if (!task) return undefined;
 
@@ -162,27 +172,29 @@ export const useTaskStore = create<TaskStore>()(
 
         set({ tasks });
         void deleteTasks([id]);
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
 
         return task;
       },
 
       restoreTask: (task) => {
         const before = get().tasks;
+        const userId = get().userId;
         const next = normalizeOrders([
           ...before,
-          { ...task, order: Number.MAX_SAFE_INTEGER },
+          { ...task, order: Number.MAX_SAFE_INTEGER, ownerId: task.ownerId ?? userId },
         ]);
         const { tasks, changed } = applyChange(before, next);
 
         set({ tasks });
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
       },
 
       duplicateTask: (id) => {
         const original = get().tasks.find((task) => task.id === id);
         if (!original) return undefined;
 
+        const userId = get().userId;
         const timestamp = nowIso();
         const copy: Task = {
           ...original,
@@ -192,6 +204,7 @@ export const useTaskStore = create<TaskStore>()(
           createdAt: timestamp,
           updatedAt: timestamp,
           completedAt: original.status === "done" ? timestamp : undefined,
+          ownerId: original.ownerId ?? userId,
         };
 
         const before = get().tasks;
@@ -199,13 +212,14 @@ export const useTaskStore = create<TaskStore>()(
         const { tasks, changed } = applyChange(before, next);
 
         set({ tasks });
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
 
         return copy;
       },
 
       moveTask: (id, status, index) => {
         const before = get().tasks;
+        const userId = get().userId;
         const next = moveTaskToColumn(
           before,
           id,
@@ -215,16 +229,17 @@ export const useTaskStore = create<TaskStore>()(
         const { tasks, changed } = applyChange(before, next);
 
         set({ tasks });
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
       },
 
       setTasks: (tasks) => {
         const before = get().tasks;
+        const userId = get().userId;
         const next = normalizeOrders(tasks);
         const applied = applyChange(before, next);
 
         set({ tasks: applied.tasks });
-        void pushTasks(applied.changed);
+        void pushTasks(applied.changed, userId);
       },
 
       toggleComplete: (id) => {
@@ -236,6 +251,7 @@ export const useTaskStore = create<TaskStore>()(
 
       clearCompleted: () => {
         const before = get().tasks;
+        const userId = get().userId;
         const completed = before.filter((task) => task.status === "done");
         if (completed.length === 0) return [];
 
@@ -246,20 +262,22 @@ export const useTaskStore = create<TaskStore>()(
 
         set({ tasks });
         void deleteTasks(completed.map((task) => task.id));
-        void pushTasks(changed);
+        void pushTasks(changed, userId);
 
         return completed;
       },
 
       replaceAll: (tasks) => {
+        const userId = get().userId;
         const timestamp = nowIso();
         const normalized = normalizeOrders(tasks).map((task) => ({
           ...task,
           updatedAt: timestamp,
+          ownerId: task.ownerId ?? userId,
         }));
 
         set({ tasks: normalized });
-        void replaceAllTasks(normalized);
+        void replaceAllTasks(normalized, userId);
       },
 
       loadExamples: () => {
