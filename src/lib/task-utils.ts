@@ -1,7 +1,7 @@
 import { differenceInCalendarDays, format, isSameDay, startOfDay } from "date-fns";
 import { es } from "date-fns/locale";
-import { PRIORITY_META, TASK_STATUSES } from "./constants";
-import type { Task, TaskFilters, TaskSort, TaskStats, TaskStatus } from "./types";
+import { PRIORITY_META, TASK_PRIORITIES, TASK_STATUSES } from "./constants";
+import type { Task, TaskFilters, TaskPriority, TaskSort, TaskStats, TaskStatus } from "./types";
 
 export const byOrder = (a: Task, b: Task) => a.order - b.order;
 
@@ -224,4 +224,8 @@ export function reorderTask(tasks: Task[], id: string, overId: string): Task[] {
 
 export function isTaskStatus(value: string): value is TaskStatus {
   return (TASK_STATUSES as readonly string[]).includes(value);
+}
+
+export function isTaskPriority(value: string): value is TaskPriority {
+  return (TASK_PRIORITIES as readonly string[]).includes(value);
 }
