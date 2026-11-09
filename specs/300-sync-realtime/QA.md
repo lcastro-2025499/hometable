@@ -152,8 +152,19 @@ Requiere navegador y, para el caso 4, dos dispositivos. Marcar al completar:
 
 ---
 
-## 7. Conclusión
+## 7. Despliegue en Vercel
 
-La capa de datos, los permisos, la migración, la API REST y Realtime están validados
-contra el proyecto real. Las puertas de calidad están en verde. Queda pendiente el QA
-visual humano y la comprobación del despliegue de producción en Vercel.
+| Comprobación | Resultado |
+|--------------|-----------|
+| Deployment de `510008e` | ✅ `READY` (`dpl_DWPoqpGGQJkrdQ3TzqrdCxRTJLDe`) |
+| URL de producción | ✅ <https://hometable-tasks.vercel.app> responde `200` |
+| Título | ✅ "Tablero de tareas" |
+| Variables públicas en el bundle | ✅ URL de Supabase presente |
+
+---
+
+## 8. Conclusión
+
+La capa de datos, los permisos, la migración, la API REST, Realtime y el despliegue de
+producción están validados contra el proyecto real. Las puertas de calidad están en
+verde. Queda pendiente únicamente el QA visual humano en navegador.

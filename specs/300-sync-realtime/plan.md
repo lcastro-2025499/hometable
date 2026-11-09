@@ -183,4 +183,5 @@ v2.1.0 y no elimina el modo local.
   `pnpm build` en verde.
 - [x] Sincronización REST y Realtime validada contra el proyecto real.
 - [ ] QA visual manual completado y documentado.
-- [ ] Despliegue de `master` en Vercel verificado.
+- [x] Despliegue de `master` en Vercel verificado (`READY`, URL `200`, variables
+  públicas presentes en el bundle).

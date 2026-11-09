@@ -186,8 +186,8 @@
   - Comando: `pnpm build`
   - Criterio: Build sin errores.
 
-- [ ] **T033** - Verificar despliegue en Vercel
-  - Criterio: Deployment `READY` y variables de Supabase aplicadas.
+- [x] **T033** - Verificar despliegue en Vercel
+  - Criterio: Deployment `READY`, URL `200` y variables de Supabase aplicadas. ✅
 
 ---
 

@@ -4,8 +4,8 @@
 
 - **Versión**: 2.1.0 (sincronización multi-dispositivo).
 - **Fecha**: 2026-11-09.
-- **Estado**: Implementación completada y validada por API/Realtime; pendiente el QA
-  visual humano y la verificación del despliegue en Vercel.
+- **Estado**: Implementación completada, validada por API/Realtime y desplegada en
+  Vercel; solo queda el QA visual humano en navegador.
 - **Modo de persistencia**: híbrido. `localStorage` (`taskboard:v2`) como respaldo y
   Supabase como sincronización opcional.
 
@@ -83,9 +83,11 @@ Requiere un navegador humano. Detalle en `specs/300-sync-realtime/QA.md`:
 
 ### 2. Verificación del despliegue
 
-- [ ] Push a `master`.
-- [ ] Deployment de Vercel en estado `READY`.
-- [ ] Probar la URL de producción con las variables de Supabase.
+- [x] Push a `master` (`510008e`).
+- [x] Deployment de Vercel `dpl_DWPoqpGGQJkrdQ3TzqrdCxRTJLDe` en estado `READY`.
+- [x] URL de producción <https://hometable-tasks.vercel.app> responde `200` con el
+  título correcto.
+- [x] El bundle de producción incluye la configuración pública de Supabase.
 
 ### 3. Autenticación (fase futura)
 
