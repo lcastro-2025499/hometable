@@ -19,6 +19,12 @@
       "skillPath": "skills/engineering/code-review/SKILL.md",
       "computedHash": "c2e0695f4d6bb9e1cc0b4c68d9965d062271cff387000fa59c1c2d31a18c25b8"
     },
+    "critical-thinking-logical-reasoning": {
+      "source": "sammcj/agentic-coding",
+      "sourceType": "github",
+      "skillPath": "skills/critical-thinking-logical-reasoning/SKILL.md",
+      "computedHash": "e3d8e841828d561b5922850a708f9fc7b3783cba0a9fea171dbe81ac93de8285"
+    },
     "diagnosing-bugs": {
       "source": "mattpocock/skills",
       "sourceType": "github",

@@ -39,4 +39,29 @@ Reglas del proyecto:
   `pnpm exec tsc --noEmit`, `pnpm build` y el QA manual descrito en el plan.
 - La extensión `git` de Spec Kit crea la rama `NNN-nombre` antes de
   `/speckit.specify`; `master` debe permanecer desplegable en Vercel.
+- **Datos/Información:** No subir datos o información sensible al repositorio, como por ejemplo `.env.local`. Asegurate de que siempre esten adentro de `.gitignore`
 
+**Tabla de commits para usar como referencia:**
+
+| Tipo | Cuándo se usa | Ejemplo |
+|------|---------------|---------|
+| `feat` | Se añade una **nueva funcionalidad** visible para el usuario | `feat(auth): añadir login con OAuth2` |
+| `fix` | Se **corrige un bug** | `fix(parser): manejar espacios múltiples en string` |
+| `docs` | Cambios **solo en documentación** (README, ADR, docstrings, comentarios) | `docs: actualizar guía de límites de API` |
+| `style` | Cambios de **formato** que no alteran la lógica (whitespace, semicolones, indentación) | `style: ejecutar prettier sobre src/` |
+| `refactor` | **Reestructurar código** sin cambiar el comportamiento ni añadir funcionalidad | `refactor(db): extraer helper del query builder` |
+| `perf` | Cambio de código que **mejora el rendimiento** | `perf(search): cachear tokenizer entre llamadas` |
+| `test` | **Añadir tests** que faltan o **corregir tests** existentes | `test(auth): cubrir caso de expiración de token` |
+| `build` | Cambios en el **sistema de build** o **dependencias externas** (webpack, npm, etc.) | `build(deps): actualizar esbuild a 0.23.1` |
+| `ci` | Cambios en la **configuración de CI/CD** (GitHub Actions, Jenkins, Travis…) | `ci: ejecutar matriz de tests en Node 22` |
+| `chore` | **Mantenimiento** que no modifica archivos de `src` ni `test` (`.gitignore`, plantillas, configs internas) | `chore: actualizar .gitignore para archivos de IDE` |
+| `revert` | **Revocar un commit** anterior | `revert: feat(billing): añadir toggle de plan anual` |
+
+**Impacto en la versión (SemVer):**
+
+| Tipo | Bump |
+|------|------|
+| `feat` | **MINOR** |
+| `fix`, `perf` | **PATCH** |
+| `!` o `BREAKING CHANGE:` (cualquier tipo) | **MAJOR** |
+| `docs`, `style`, `refactor`, `test`, `build`, `ci`, `chore`, `revert` | Ninguno |   
