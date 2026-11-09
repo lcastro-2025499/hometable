@@ -52,4 +52,8 @@ begin
 end
 $$;
 
+-- RLS filtra las filas, pero los roles del cliente necesitan privilegios
+-- explícitos sobre la tabla para poder usar la API REST y Realtime.
+grant select, insert, update, delete on table public.tasks to anon, authenticated;
+
 commit;
