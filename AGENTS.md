@@ -25,19 +25,14 @@ Reglas del proyecto:
 - Las plantillas efectivas están en `.specify/templates/overrides/` y están
   adaptadas a Hometable; no edites las plantillas core de `.specify/templates/`.
 - La UI y todos los documentos SDD se escriben en español.
-- El producto es una SPA sin backend propio: persistencia en `localStorage`
-  (`taskboard:v2`), con sincronización multi-dispositivo opcional vía Supabase.
+- El producto es una aplicación web full-stack con Next.js App Router: autenticación obligatoria con **Better Auth** (adaptador PostgreSQL conectado a Supabase), persistencia y sincronización multi-dispositivo vía Supabase.
 - La fuente de verdad del esquema es
-  `supabase/migrations/20261109000000_align_tasks_schema.sql`. Incluye tabla,
-  trigger, índices, RLS, `GRANT` y publicación Realtime.
-- Solo se usan variables públicas (`NEXT_PUBLIC_SUPABASE_*`) en el cliente. Nunca
-  expongas `service_role` ni claves secretas; documenta las variables en
-  `.env.example` y mantén `.env.local` fuera de git.
+  `supabase/migrations/20261109000000_align_tasks_schema.sql` y las migraciones de Better Auth. Incluye tablas de usuario, sesiones, cuentas, verificación, tareas con `owner_id`, índices, RLS y publicación Realtime.
+- Se usan variables públicas (`NEXT_PUBLIC_*`) en el cliente y claves privadas en el servidor (`BETTER_AUTH_SECRET`, `RECAPTCHA_SECRET_KEY`, `RESEND_API_KEY`). Nunca expongas secretos; documenta las variables en `.env.example` y mantén `.env.local` fuera de git.
 
 ## Reglas de commits y seguridad:
 
-- **Nomenclatura de commits**: Usar formato Conventional Commits en inglés (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
-- **Seguridad**: NUNCA subir archivos sensibles (como `.env.local`) al repositorio. Asegurar siempre que estén en `.gitignore`.
+- **Nomenclatura y tamaño de commits**: Usar formato Conventional Commits en inglés (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`). **Hacer commits pequeños y frecuentes** (habitualmente un commit por cada modificación o tarea atómica importante; nunca mezclar refactorings masivos, cambios de docs y fixes en un solo commit grande).
 - Reutiliza `src/components/ui/`, `src/lib/task-utils.ts` y
   `src/store/task-store.ts` antes de crear alternativas.
 - Puertas obligatorias antes de integrar: `pnpm lint`, `pnpm exec next typegen` +
