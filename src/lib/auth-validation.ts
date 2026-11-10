@@ -96,3 +96,10 @@ export const verifyEmailSchema = z.object({
 });
 
 export type VerifyEmailSchema = z.infer<typeof verifyEmailSchema>;
+
+/** Payload para reenviar el código de un registro pendiente. */
+export const resendVerificationSchema = z.object({
+  email: emailSchema,
+});
+
+export type ResendVerificationSchema = z.infer<typeof resendVerificationSchema>;

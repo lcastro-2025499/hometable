@@ -1,16 +1,14 @@
 import { betterAuth } from "better-auth";
-import { emailOTP, username } from "better-auth/plugins";
+import { username } from "better-auth/plugins";
 
 import { pool } from "./db";
-import { passwordResetEmail, sendEmail, verificationCodeEmail } from "./email";
+import { passwordResetEmail, sendEmail } from "./email";
 
 // Resolve base URL: explicit env var, else the public app URL, else Vercel URL, else localhost
 const baseURL =
   process.env.BETTER_AUTH_URL ||
   process.env.NEXT_PUBLIC_APP_URL ||
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-
-const verificationExpiresIn = 60 * 10; // 10 minutos
 
 export const auth = betterAuth({
   database: pool,
@@ -29,12 +27,12 @@ export const auth = betterAuth({
     },
   },
   emailVerification: {
-    // El OTP lo envía explícitamente la ruta de registro para poder revertir
-    // la creación de la cuenta si el correo no se puede entregar.
+    // La verificación la gestiona /api/auth/verify-email: no hay usuario al
+    // que enviar correos hasta que el OTP es correcto. Better Auth solo
+    // comprueba `emailVerified` al iniciar sesión.
     sendOnSignUp: false,
-    sendOnSignIn: true,
-    autoSignInAfterVerification: true,
-    expiresIn: verificationExpiresIn,
+    sendOnSignIn: false,
+    autoSignInAfterVerification: false,
   },
   user: {
     additionalFields: {
@@ -46,20 +44,6 @@ export const auth = betterAuth({
     username({
       minUsernameLength: 3,
       maxUsernameLength: 15,
-    }),
-    emailOTP({
-      otpLength: 6,
-      expiresIn: verificationExpiresIn,
-      allowedAttempts: 5,
-      // Nunca guardamos el código en claro en la base de datos.
-      storeOTP: "hashed",
-      // Sustituye el enlace de verificación por defecto por un código OTP.
-      overrideDefaultEmailVerification: true,
-      async sendVerificationOTP({ email, otp, type }) {
-        if (type !== "email-verification") return;
-        const { subject, html } = verificationCodeEmail("", otp);
-        await sendEmail({ to: email, subject, html });
-      },
     }),
   ],
   session: {
