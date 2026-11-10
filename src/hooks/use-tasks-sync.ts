@@ -1,11 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSupabase } from './use-supabase';
 import { useTaskStore } from '@/store/task-store';
-import { flushSyncQueue, fetchRemoteTasks, pushTasks } from '@/lib/supabase-sync';
+import { fetchRemoteTasks, flushSyncQueue, pushTasks } from '@/lib/tasks-sync';
 import { reconcileTasks } from '@/lib/task-sync';
-import { rowToTask, type TaskRow } from '@/lib/task-mapper';
 import { authClient } from '@/lib/auth-client';
 import type { Task } from '@/lib/types';
 
@@ -27,6 +25,8 @@ export interface TasksSyncResult extends SyncState {
   migrateLocalTasks: (tasks: Task[]) => Promise<boolean>;
 }
 
+const POLL_INTERVAL_MS = 20_000;
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Error de sincronización desconocido.';
 }
@@ -40,23 +40,17 @@ export function useTasksSync(): TasksSyncResult {
     setUserId(userId);
   }, [userId, setUserId]);
 
-  const supabase = useSupabase();
   const syncFromSupabase = useTaskStore((state) => state.syncFromSupabase);
-  const addTaskRemote = useTaskStore((state) => state.addTaskRemote);
-  const updateTaskRemote = useTaskStore((state) => state.updateTaskRemote);
-  const deleteTaskRemote = useTaskStore((state) => state.deleteTaskRemote);
 
   const [state, setState] = useState<SyncState>(() => ({
-    status: supabase ? 'connecting' : 'local',
+    status: 'connecting',
     lastSync: null,
     error: null,
     localOnly: [],
   }));
 
   const refresh = useCallback(async () => {
-    const client = supabase;
-
-    if (!client) {
+    if (!userId) {
       setState({
         status: 'local',
         lastSync: null,
@@ -75,7 +69,7 @@ export function useTasksSync(): TasksSyncResult {
     try {
       await flushSyncQueue(userId);
 
-      const remote = await fetchRemoteTasks(userId);
+      const remote = await fetchRemoteTasks();
       const local = useTaskStore.getState().tasks;
       const { merged, localOnly, localNewer } = reconcileTasks(local, remote);
 
@@ -101,70 +95,23 @@ export function useTasksSync(): TasksSyncResult {
         error: errorMessage(error),
       }));
     }
-  }, [supabase, userId, syncFromSupabase]);
+  }, [userId, syncFromSupabase]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  // Sincronización periódica: sustituye la suscripción Realtime (que exigía
+  // exponer `tasks` al cliente de Supabase) por sondeo autenticado.
   useEffect(() => {
-    if (!supabase) return;
+    if (!userId) return;
 
-    const channel = supabase
-      .channel('public:tasks')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'tasks' },
-        (payload) => {
-          addTaskRemote(rowToTask(payload.new as TaskRow));
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'tasks' },
-        (payload) => {
-          updateTaskRemote(rowToTask(payload.new as TaskRow));
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'tasks' },
-        (payload) => {
-          const row = payload.old as Partial<TaskRow>;
-          if (row.id) deleteTaskRemote(row.id);
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setState((current) => ({
-            ...current,
-            status: 'connected',
-            lastSync: new Date().toISOString(),
-            error: null,
-          }));
-          void flushSyncQueue(userId);
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setState((current) => ({
-            ...current,
-            status: navigator.onLine ? 'error' : 'disconnected',
-            error: navigator.onLine
-              ? 'No se pudo mantener la conexión en tiempo real.'
-              : null,
-          }));
-        }
-      });
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [supabase, userId, addTaskRemote, updateTaskRemote, deleteTaskRemote]);
-
-  useEffect(() => {
-    if (!supabase) return;
-
-    const handleOnline = () => {
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       void refresh();
     };
+
+    const interval = window.setInterval(tick, POLL_INTERVAL_MS);
 
     const handleOffline = () => {
       setState((current) => ({
@@ -174,14 +121,17 @@ export function useTasksSync(): TasksSyncResult {
       }));
     };
 
-    window.addEventListener('online', handleOnline);
+    window.addEventListener('online', tick);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('focus', tick);
 
     return () => {
-      window.removeEventListener('online', handleOnline);
+      window.clearInterval(interval);
+      window.removeEventListener('online', tick);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('focus', tick);
     };
-  }, [supabase, refresh]);
+  }, [userId, refresh]);
 
   const migrateLocalTasks = useCallback(async (tasks: Task[]) => {
     if (tasks.length === 0) return true;

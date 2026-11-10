@@ -5,13 +5,15 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { STORAGE_KEY } from "@/lib/constants";
 import { createExampleTasks } from "@/lib/seed";
 import { migrateLegacyStorage } from "@/lib/storage-migration";
-import { deleteTasks, pushTasks, replaceAllTasks } from "@/lib/supabase-sync";
+import { deleteTasks, pushTasks, replaceAllTasks } from "@/lib/tasks-sync";
 import { moveTaskToColumn, normalizeOrders } from "@/lib/task-utils";
 import type { NewTaskInput, Task, TaskStatus } from "@/lib/types";
 
 interface TaskStore {
   tasks: Task[];
   userId?: string;
+  /** Dueño de las tareas guardadas en localStorage (para no mezclar cuentas). */
+  ownerId?: string;
   setUserId: (userId?: string) => void;
   addTask: (input: NewTaskInput) => Task;
   addTasks: (tasks: Task[]) => void;
@@ -95,7 +97,24 @@ export const useTaskStore = create<TaskStore>()(
     (set, get) => ({
       tasks: [] as Task[],
       userId: undefined,
-      setUserId: (userId) => set({ userId }),
+      ownerId: undefined,
+      setUserId: (userId) => {
+        if (!userId) {
+          set({ userId });
+          return;
+        }
+
+        const currentOwner = get().ownerId;
+
+        // Si el navegador ya pertenecía a otra cuenta, no mostramos ni
+        // reenviamos sus tareas al nuevo usuario.
+        if (currentOwner && currentOwner !== userId) {
+          set({ userId, ownerId: userId, tasks: [] });
+          return;
+        }
+
+        set({ userId, ownerId: userId });
+      },
 
       addTask: (input) => {
         const before = get().tasks;
@@ -171,7 +190,7 @@ export const useTaskStore = create<TaskStore>()(
         const { tasks, changed } = applyChange(before, next);
 
         set({ tasks });
-        void deleteTasks([id]);
+        void deleteTasks([id], userId);
         void pushTasks(changed, userId);
 
         return task;
@@ -261,7 +280,7 @@ export const useTaskStore = create<TaskStore>()(
         const { tasks, changed } = applyChange(before, next);
 
         set({ tasks });
-        void deleteTasks(completed.map((task) => task.id));
+        void deleteTasks(completed.map((task) => task.id), userId);
         void pushTasks(changed, userId);
 
         return completed;
@@ -309,7 +328,7 @@ export const useTaskStore = create<TaskStore>()(
       name: STORAGE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ tasks: state.tasks }),
+      partialize: (state) => ({ tasks: state.tasks, ownerId: state.ownerId }),
     },
   ),
 );
