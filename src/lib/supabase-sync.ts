@@ -14,6 +14,17 @@ function isOnline(): boolean {
   return typeof navigator === "undefined" || navigator.onLine;
 }
 
+// Los IDs de Better Auth son alfanuméricos. Validamos antes de interpolarlos
+// en filtros PostgREST (`.or(...)`) para evitar inyección de filtros.
+const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+function ownedOrNullFilter(userId: string): string {
+  if (!SAFE_USER_ID.test(userId)) {
+    throw new Error("Identificador de usuario inválido.");
+  }
+  return `owner_id.eq.${userId},owner_id.is.null`;
+}
+
 export function canUseSupabase(): boolean {
   return Boolean(supabase) && isOnline();
 }
@@ -42,7 +53,7 @@ async function runReplace(tasks: Task[], userId?: string): Promise<void> {
 
   let query = supabase.from("tasks").select("id");
   if (userId) {
-    query = query.or(`owner_id.eq.${userId},owner_id.is.null`);
+    query = query.or(ownedOrNullFilter(userId));
   }
 
   const { data, error } = await query;
@@ -154,7 +165,7 @@ export async function fetchRemoteTasks(userId?: string): Promise<Task[]> {
 
   let query = supabase.from("tasks").select("*");
   if (userId) {
-    query = query.or(`owner_id.eq.${userId},owner_id.is.null`);
+    query = query.or(ownedOrNullFilter(userId));
   }
 
   const { data, error } = await query.order("created_at", { ascending: false });
