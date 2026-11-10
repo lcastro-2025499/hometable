@@ -41,8 +41,8 @@ export function UserMenu() {
           <div className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
             <User className="size-4" />
           </div>
-          <span className="hidden max-w-32 truncate text-xs font-medium sm:inline-block">
-            {(user as any)?.displayUsername || user.username || user.name}
+                    <span className="hidden max-w-32 truncate text-xs font-medium sm:inline-block">
+            {user.username || user.name}
           </span>
         </Button>
       </DropdownMenuTrigger>

@@ -32,6 +32,13 @@ export async function POST(request: Request) {
       lastName: lastName.trim(),
     });
 
+    if (!result) {
+      return NextResponse.json(
+        { error: "No se pudo crear el usuario" },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       success: true,
       user: result.user,

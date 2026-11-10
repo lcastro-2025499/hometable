@@ -85,7 +85,7 @@ export default function RegisterPage() {
 
       const registerData = await res.json();
 
-      if (!res.ok || registerData.error) {
+      if (!res.ok) {
         toast.error(registerData.error || "Error al registrar la cuenta.");
         setRecaptchaToken(null);
         setRecaptchaKey((k) => k + 1);
@@ -98,6 +98,7 @@ export default function RegisterPage() {
       });
 
       router.push("/login");
+      router.refresh();
       setIsSubmitting(false);
     } catch (err) {
       console.error(err);
