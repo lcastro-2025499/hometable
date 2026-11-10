@@ -5,9 +5,11 @@ import { Resend } from "resend";
 
 const resend = new Resend(process.env.RESEND_API_KEY || "re_dummy");
 
-// Detect if we're in development/localhost
-const isDev = process.env.NODE_ENV === "development" || !process.env.NODE_ENV;
-const baseURL = process.env.BETTER_AUTH_URL || "http://localhost:3000";
+// Resolve base URL: explicit env var, else the public app URL, else Vercel URL, else localhost
+const baseURL =
+  process.env.BETTER_AUTH_URL ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
 export const auth = betterAuth({
   database: new Pool({
@@ -51,10 +53,6 @@ export const auth = betterAuth({
       firstName: { type: "string", required: true },
       lastName: { type: "string", required: true },
     },
-    // Habilitar email verification
-    emailVerification: {
-      sendVerificationEmail: false, // No requerimos verificación para dev
-    },
   },
   plugins: [
     username({
@@ -66,19 +64,13 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7, // 7 días
     updateAge: 60 * 60 * 24, // 1 día
   },
-  // Configuración de cookies para localhost/desarrollo
+  // Cookies: secure solo cuando servimos por HTTPS
   cookiePrefix: "better-auth",
   cookiePath: "/",
-  // Permite cookies en localhost
-  cookieAttributes: isDev
-    ? {
-        secure: false, // HTTP en localhost
-        sameSite: "lax" as const,
-      }
-    : {
-        secure: true, // HTTPS en producción
-        sameSite: "strict" as const,
-      },
+  cookieAttributes: {
+    secure: baseURL.startsWith("https://"),
+    sameSite: "lax",
+  },
   secret: process.env.BETTER_AUTH_SECRET || "hometable_better_auth_secret_key_32bytes_long!",
   baseURL,
 });
