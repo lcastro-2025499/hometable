@@ -20,42 +20,46 @@ export async function POST(request: Request) {
       );
     }
 
-    // Sign up with Better Auth API including additional fields (firstName, lastName, username)
-    // The API schema uses .and(z.record(z.string(), z.any())) to accept additional fields
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await (auth.api.signUpEmail as any)({
-      email: email.trim(),
-      password: password,
-      name: name.trim(),
-      username: username.trim(),
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
+    // Better Auth server API requires the payload nested under `body`.
+    // The `/sign-up/email` schema accepts additional fields (firstName, lastName)
+    // via `.and(z.record(z.string(), z.any()))`.
+    const result = await auth.api.signUpEmail({
+      body: {
+        email: email.trim(),
+        password,
+        name: name.trim(),
+        username: username.trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+      },
     });
-
-    if (!result) {
-      return NextResponse.json(
-        { error: "No se pudo crear el usuario" },
-        { status: 500 }
-      );
-    }
 
     return NextResponse.json({
       success: true,
-      user: result.user,
-      token: result.token,
+      user: result?.user ?? null,
+      token: result?.token ?? null,
     });
   } catch (error: unknown) {
     console.error("Error en registro:", error);
+
     const message = error instanceof Error ? error.message : "Error interno del servidor";
-    if (message.includes("already exists")) {
+    const status =
+      typeof error === "object" && error !== null && "statusCode" in error
+        ? Number((error as { statusCode?: number }).statusCode) || 500
+        : 500;
+
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes("already") ||
+      normalized.includes("exists") ||
+      normalized.includes("taken")
+    ) {
       return NextResponse.json(
         { error: "El correo o nombre de usuario ya está registrado" },
         { status: 409 }
       );
     }
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+
+    return NextResponse.json({ error: message }, { status });
   }
 }
