@@ -1,9 +1,8 @@
 import { betterAuth } from "better-auth";
-import { username } from "better-auth/plugins";
-import { Pool } from "pg";
-import { Resend } from "resend";
+import { emailOTP, username } from "better-auth/plugins";
 
-const resend = new Resend(process.env.RESEND_API_KEY || "re_dummy");
+import { pool } from "./db";
+import { passwordResetEmail, sendEmail, verificationCodeEmail } from "./email";
 
 // Resolve base URL: explicit env var, else the public app URL, else Vercel URL, else localhost
 const baseURL =
@@ -11,42 +10,31 @@ const baseURL =
   process.env.NEXT_PUBLIC_APP_URL ||
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
+const verificationExpiresIn = 60 * 10; // 10 minutos
+
 export const auth = betterAuth({
-  database: new Pool({
-    connectionString: process.env.DIRECT_URL || process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === "production" || process.env.DATABASE_URL?.includes("supabase.co") || process.env.DATABASE_URL?.includes("pooler.supabase.com") || process.env.DIRECT_URL?.includes("pooler.supabase.com")
-      ? { rejectUnauthorized: false }
-      : false,
-  }),
+  database: pool,
   emailAndPassword: {
     enabled: true,
+    // Ninguna cuenta puede iniciar sesión hasta confirmar su correo.
+    requireEmailVerification: true,
+    autoSignIn: false,
     minPasswordLength: 8,
     maxPasswordLength: 128,
     async sendResetPassword({ user, url, token }) {
-      const fromEmail = process.env.EMAIL_FROM || "onboarding@resend.dev";
-      try {
-        await resend.emails.send({
-          from: fromEmail,
-          to: user.email,
-          subject: "Código para restablecer tu contraseña - Hometable",
-          html: `
-            <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; border: 1px solid #e4e4e7; border-radius: 8px;">
-              <h2 style="color: #18181b;">Restablecer contraseña</h2>
-              <p>Hola <strong>${user.name}</strong>,</p>
-              <p>Has solicitado restablecer tu contraseña en Hometable. Tu código de verificación es:</p>
-              <div style="background-color: #f4f4f5; padding: 12px 24px; font-size: 24px; font-weight: bold; letter-spacing: 4px; text-align: center; border-radius: 6px; margin: 16px 0;">
-                ${token}
-              </div>
-              <p>O si prefieres, puedes hacer clic directamente en el siguiente enlace:</p>
-              <p><a href="${url}" style="color: #2563eb;">Restablecer mi contraseña</a></p>
-              <p style="color: #71717a; font-size: 12px; margin-top: 24px;">Si no solicitaste este cambio, puedes ignorar este correo.</p>
-            </div>
-          `,
-        });
-      } catch (err) {
-        console.error("Error enviando email de reset de contraseña:", err);
-      }
+      // Si el envío falla, el error se propaga para no dar una falsa sensación
+      // de éxito al usuario.
+      const { subject, html } = passwordResetEmail(user.name, token, url);
+      await sendEmail({ to: user.email, subject, html });
     },
+  },
+  emailVerification: {
+    // El OTP lo envía explícitamente la ruta de registro para poder revertir
+    // la creación de la cuenta si el correo no se puede entregar.
+    sendOnSignUp: false,
+    sendOnSignIn: true,
+    autoSignInAfterVerification: true,
+    expiresIn: verificationExpiresIn,
   },
   user: {
     additionalFields: {
@@ -58,6 +46,20 @@ export const auth = betterAuth({
     username({
       minUsernameLength: 3,
       maxUsernameLength: 15,
+    }),
+    emailOTP({
+      otpLength: 6,
+      expiresIn: verificationExpiresIn,
+      allowedAttempts: 5,
+      // Nunca guardamos el código en claro en la base de datos.
+      storeOTP: "hashed",
+      // Sustituye el enlace de verificación por defecto por un código OTP.
+      overrideDefaultEmailVerification: true,
+      async sendVerificationOTP({ email, otp, type }) {
+        if (type !== "email-verification") return;
+        const { subject, html } = verificationCodeEmail("", otp);
+        await sendEmail({ to: email, subject, html });
+      },
     }),
   ],
   session: {

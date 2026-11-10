@@ -18,7 +18,6 @@ import { registerSchema, type RegisterSchema } from "@/lib/auth-validation";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
   const [recaptchaKey, setRecaptchaKey] = useState(0);
 
@@ -41,7 +40,7 @@ export default function RegisterPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isButtonDisabled = !!errors.confirmPassword || loading || isSubmitting;
+  const isButtonDisabled = !recaptchaToken || !!errors.confirmPassword || isSubmitting;
 
   const onSubmit = async (values: RegisterSchema) => {
     if (!recaptchaToken) {
@@ -51,23 +50,8 @@ export default function RegisterPage() {
 
     setIsSubmitting(true);
     try {
-      // 1. Verify reCAPTCHA token with server
-      const recaptchaRes = await fetch("/api/auth/verify-recaptcha", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: recaptchaToken }),
-      });
-
-      const recaptchaData = await recaptchaRes.json();
-      if (!recaptchaData.success) {
-        toast.error(recaptchaData.message || "Error al verificar reCAPTCHA.");
-        setRecaptchaToken(null);
-        setRecaptchaKey((k) => k + 1);
-        setIsSubmitting(false);
-        return;
-      }
-
-      // 2. Sign up user via API (handles additional fields firstName, lastName)
+      // La verificación de reCAPTCHA se hace en el servidor, dentro de la misma
+      // petición de registro, para que no se pueda omitir.
       const fullName = `${values.firstName.trim()} ${values.lastName.trim()}`;
 
       const res = await fetch("/api/auth/register", {
@@ -80,6 +64,7 @@ export default function RegisterPage() {
           username: values.username.trim(),
           firstName: values.firstName.trim(),
           lastName: values.lastName.trim(),
+          recaptchaToken,
         }),
       });
 
@@ -93,11 +78,11 @@ export default function RegisterPage() {
         return;
       }
 
-      toast.success("¡Registro completado exitosamente!", {
-        description: "Ahora puedes iniciar sesión con tu correo o nombre de usuario.",
+      toast.success("¡Cuenta creada!", {
+        description: "Te enviamos un código de 6 dígitos para verificar tu correo.",
       });
 
-      router.push("/login");
+      router.push(`/verify-email?email=${encodeURIComponent(values.email.trim())}`);
       router.refresh();
       setIsSubmitting(false);
     } catch (err) {

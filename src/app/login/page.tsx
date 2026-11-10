@@ -51,6 +51,18 @@ export default function LoginPage() {
           });
 
       if (result.error) {
+        if (result.error.code === "EMAIL_NOT_VERIFIED") {
+          toast.error("Debes verificar tu correo antes de iniciar sesión.", {
+            description: "Te enviamos un código nuevo. Revisa tu bandeja de entrada.",
+          });
+          const query = isEmail
+            ? `?email=${encodeURIComponent(values.emailOrUsername.trim())}`
+            : "";
+          router.push(`/verify-email${query}`);
+          setLoading(false);
+          return;
+        }
+
         toast.error(result.error.message || "Credenciales incorrectas o error al iniciar sesión.");
         setLoading(false);
         return;
