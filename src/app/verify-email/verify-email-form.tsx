@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { authClient } from "@/lib/auth-client";
 import {
   emailSchema,
   verifyEmailSchema,
@@ -44,28 +43,27 @@ export function VerifyEmailForm({ initialEmail }: { initialEmail: string }) {
     setLoading(true);
 
     try {
-      const result = await authClient.emailOtp.verifyEmail({
-        email: values.email,
-        otp: values.otp,
+      const res = await fetch("/api/auth/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: values.email, otp: values.otp }),
       });
 
-      if (result.error) {
-        const code = result.error.code ?? "";
-        const message =
-          code === "TOO_MANY_ATTEMPTS"
-            ? "Demasiados intentos. Solicita un código nuevo."
-            : code === "USER_NOT_FOUND"
-              ? "No encontramos una cuenta con ese correo."
-              : "Código incorrecto o expirado.";
-        toast.error(message);
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        attemptsLeft?: number;
+      };
+
+      if (!res.ok) {
+        toast.error(data.error || "Código incorrecto o expirado.");
         return;
       }
 
       toast.success("¡Correo verificado!", {
-        description: "Tu cuenta está activa. Bienvenido a Hometable.",
+        description: "Tu cuenta está lista. Inicia sesión para entrar al tablero.",
       });
 
-      router.push("/");
+      router.push("/login?verified=1");
       router.refresh();
     } catch (error) {
       console.error(error);
@@ -86,13 +84,25 @@ export function VerifyEmailForm({ initialEmail }: { initialEmail: string }) {
     setResending(true);
 
     try {
-      const result = await authClient.emailOtp.sendVerificationOtp({
-        email: parsedEmail.data,
-        type: "email-verification",
+      const res = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: parsedEmail.data }),
       });
 
-      if (result.error) {
-        toast.error(result.error.message || "No pudimos reenviar el código.");
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        retryAfterSeconds?: number;
+      };
+
+      if (res.status === 429 && data.retryAfterSeconds) {
+        setCooldown(data.retryAfterSeconds);
+        toast.error(data.error || "Espera un momento antes de pedir otro código.");
+        return;
+      }
+
+      if (!res.ok) {
+        toast.error(data.error || "No pudimos reenviar el código.");
         return;
       }
 
@@ -199,9 +209,9 @@ export function VerifyEmailForm({ initialEmail }: { initialEmail: string }) {
           </CardContent>
           <CardFooter className="flex flex-col items-center justify-center gap-2 border-t py-4 text-center text-sm text-muted-foreground">
             <p>
-              ¿Te equivocaste de correo?{" "}
+              ¿Te equivocaste de correo o de usuario?{" "}
               <Link href="/register" className="font-medium text-primary underline-offset-4 hover:underline">
-                Crea otra cuenta
+                Corrige tus datos
               </Link>
             </p>
             <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">

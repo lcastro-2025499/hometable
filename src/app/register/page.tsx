@@ -78,8 +78,8 @@ export default function RegisterPage() {
         return;
       }
 
-      toast.success("¡Cuenta creada!", {
-        description: "Te enviamos un código de 6 dígitos para verificar tu correo.",
+      toast.success("Revisa tu correo", {
+        description: "Te enviamos un código de 6 dígitos para activar tu cuenta.",
       });
 
       router.push(`/verify-email?email=${encodeURIComponent(values.email.trim())}`);

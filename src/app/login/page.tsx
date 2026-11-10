@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -20,6 +20,16 @@ import { loginSchema, type LoginSchema } from "@/lib/auth-validation";
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("verified") !== "1") return;
+
+    toast.success("Correo verificado", {
+      description: "Tu cuenta está activa. Inicia sesión con tu contraseña.",
+    });
+    window.history.replaceState({}, "", "/login");
+  }, []);
 
   const form = useForm<LoginSchema>({
     resolver: zodResolver(loginSchema),
@@ -53,12 +63,9 @@ export default function LoginPage() {
       if (result.error) {
         if (result.error.code === "EMAIL_NOT_VERIFIED") {
           toast.error("Debes verificar tu correo antes de iniciar sesión.", {
-            description: "Te enviamos un código nuevo. Revisa tu bandeja de entrada.",
+            description:
+              "Si tu registro quedó incompleto, vuelve a llenar el formulario y confirma el código.",
           });
-          const query = isEmail
-            ? `?email=${encodeURIComponent(values.emailOrUsername.trim())}`
-            : "";
-          router.push(`/verify-email${query}`);
           setLoading(false);
           return;
         }
