@@ -37,37 +37,50 @@
 - [x] Tarea 4.6: Sustituir Realtime por sondeo + refresh; cola offline vinculada por `ownerId`.
 - [x] Tarea 4.7: QA directo (BD) y HTTP (API): aislamiento, inyección, rollback, duplicados y CSRF.
 
+## 5. Registro diferido hasta verificar el correo (2026-11-10)
+
+- [x] Tarea 5.1: Crear `public.pending_registration` (email/username únicos, hash de contraseña y del OTP, expiración, intentos, cooldown) con RLS y sin grants públicos.
+- [x] Tarea 5.2: `src/lib/pending-registration.ts`: alta "el último gana", purga de pendientes, limpieza de cuentas sin verificar antiguas, verificación atómica y creación de `user` + `account` solo con OTP correcto.
+- [x] Tarea 5.3: Reescribir `/api/auth/register` para no crear la cuenta; añadir `/api/auth/verify-email` y `/api/auth/resend-verification`.
+- [x] Tarea 5.4: Retirar el plugin `emailOTP` de Better Auth y del cliente; la verificación ya no depende de un usuario existente.
+- [x] Tarea 5.5: Actualizar `/verify-email` (redirige a `/login` tras verificar) y `/login` (aviso de correo verificado; `EMAIL_NOT_VERIFIED` apunta a completar el registro).
+- [x] Tarea 5.6: QA: registrar no crea `user`; OTP incorrecto incrementa intentos; OTP correcto crea usuario verificado y el login funciona; corrección de email/username reemplaza el pendiente; conflicto con cuenta verificada devuelve 409; expiración y reenvío con cooldown.
+
 ---
 
 ## Estado Actual: ✅ COMPLETADO
 
 La autenticación con Better Auth, la verificación por OTP y el aislamiento de tareas están implementados.
 
-> ⚠️ **Pendiente de infraestructura**: verificar un dominio en Resend y actualizar `EMAIL_FROM`. Sin esto, el registro falla de forma cerrada (502).
+> ✅ El dominio `luuiscastro.me` está verificado en Resend y `EMAIL_FROM` usa `no-reply@luuiscastro.me`.
 
 ### Archivos creados/modificados:
 
 **Backend / Seguridad:**
-- `src/lib/auth.ts` - Configuración de Better Auth, plugin `emailOTP` y verificación obligatoria.
-- `src/lib/auth-client.ts` - Cliente de Better Auth con plugins `username` y `emailOTP`.
+- `src/lib/auth.ts` - Configuración de Better Auth y verificación obligatoria; el plugin `emailOTP` fue retirado.
+- `src/lib/auth-client.ts` - Cliente de Better Auth con el plugin `username`.
 - `src/lib/auth-server.ts` - Helper `getSession()` para Server Components y rutas.
 - `src/lib/db.ts` - Pool único de PostgreSQL reutilizado por Better Auth y las rutas.
+- `src/lib/pending-registration.ts` - Registros pendientes: alta "el último gana", OTP propio, verificación y creación diferida de `user` + `account`.
 - `src/lib/email.ts` - Envío con Resend y plantillas HTML (código de verificación y reset) con escape.
 - `src/lib/recaptcha.ts` - Verificación reCAPTCHA server-side fail-closed.
 - `src/lib/tasks-repo.ts` - CRUD parametrizado de tareas con `owner_id` derivado de la sesión.
 - `src/app/api/auth/[...all]/route.ts` - Handler de endpoints de Better Auth.
-- `src/app/api/auth/register/route.ts` - Registro fail-closed con reCAPTCHA, OTP y rollback.
+- `src/app/api/auth/register/route.ts` - Registro fail-closed con reCAPTCHA; solo crea el pendiente.
+- `src/app/api/auth/verify-email/route.ts` - Verifica el OTP y crea la cuenta real.
+- `src/app/api/auth/resend-verification/route.ts` - Reenvío del código con cooldown.
 - `src/app/api/tasks/route.ts` - API autenticada de tareas (GET/POST/PUT/DELETE).
 - `supabase/migrations/20261109010000_better_auth_and_tasks_owner.sql` - Migración de schema.
 - `supabase/migrations/20261110000000_lock_down_tasks.sql` - Lockdown de grants/RLS y Realtime.
+- `supabase/migrations/20261111000000_pending_registrations.sql` - Tabla `pending_registration` con RLS y sin grants públicos.
 
 **Validación:**
-- `src/lib/auth-validation.ts` - Schemas Zod para login, registro, verificación OTP y reset.
+- `src/lib/auth-validation.ts` - Schemas Zod para login, registro, verificación OTP, reenvío y reset.
 
 **UI/Páginas:**
-- `src/app/login/page.tsx` - Login con manejo de `EMAIL_NOT_VERIFIED`.
+- `src/app/login/page.tsx` - Login con aviso de correo verificado y manejo de `EMAIL_NOT_VERIFIED`.
 - `src/app/register/page.tsx` - Registro con reCAPTCHA integrado en el servidor.
-- `src/app/verify-email/` - Página y formulario de verificación por OTP.
+- `src/app/verify-email/` - Página y formulario de verificación por OTP; redirige a `/login` al confirmar.
 - `src/app/forgot-password/page.tsx` - Recuperación de contraseña.
 - `src/app/page.tsx` - Guard server-side de sesión y correo verificado.
 - `src/components/user-menu.tsx` - Menú de usuario con logout.

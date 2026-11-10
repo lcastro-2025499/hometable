@@ -16,14 +16,15 @@
 - [x] Configuración del servidor Better Auth y adaptador PostgreSQL.
 - [x] Vistas de Login, Registro con reCAPTCHA y Recuperación de Contraseña con Resend.
 - [x] Middleware de protección de rutas y asociación de tareas por usuario (`owner_id`).
-- [x] **Verificación de correo obligatoria por código OTP de 6 dígitos** (plugin `emailOTP`, `requireEmailVerification: true`, `storeOTP: "hashed"`, 10 min, 5 intentos).
-- [x] **Registro fail-closed**: el reCAPTCHA se valida dentro de `/api/auth/register` y, si Resend no puede entregar el código, la cuenta se revierte (HTTP 502).
+- [x] **Verificación de correo obligatoria por código OTP de 6 dígitos** (`requireEmailVerification: true`, 10 min, 5 intentos, hashes HMAC-SHA256).
+- [x] **Registro fail-closed**: el reCAPTCHA se valida dentro de `/api/auth/register` y, si Resend no puede entregar el código, el registro pendiente se elimina (HTTP 502).
+- [x] **Registro diferido**: la cuenta (`user` + `account`) se crea **solo** cuando el OTP es correcto (`public.pending_registration`); un correo mal escrito o un registro abandonado no bloquea email/username ni ocupa una cuenta real.
 - [x] **Lockdown de Supabase**: se revocaron grants y políticas de `anon`/`authenticated` sobre `tasks`, `board` y tablas de Better Auth; se retiró `tasks` de Realtime.
 - [x] **CRUD de tareas server-side** con SQL parametrizado (`src/lib/tasks-repo.ts`) y sesión verificada (`/api/tasks`); el cliente ya no usa la anon key.
 - [x] Sincronización por sondeo (20 s) + refresh en focus/online, cola offline vinculada por `ownerId`.
 - [x] QA directo (BD) y HTTP (rutas API): aislamiento entre usuarios, inyección de IDs, rollback, duplicados y origen CSRF.
 
-> ⚠️ **Bloqueo conocido (producción)**: el dominio de Resend (`hometable.resend`) está en estado `not_started`. Hasta verificar un dominio real y ajustar `EMAIL_FROM`, ningún registro nuevo podrá completar el envío del código OTP y devolverá 502. Ver `.env.example`.
+> ✅ **Resend**: dominio `luuiscastro.me` verificado y `EMAIL_FROM=no-reply@luuiscastro.me` en Vercel (Production) y `.env.local`.
 
 ### Etapa 3: Futuro (Planificado)
 - [ ] Interfaz estilo Anthropic para landing.
