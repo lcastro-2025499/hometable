@@ -25,7 +25,7 @@ export interface TasksSyncResult extends SyncState {
   migrateLocalTasks: (tasks: Task[]) => Promise<boolean>;
 }
 
-const POLL_INTERVAL_MS = 20_000;
+const POLL_INTERVAL_MS = 2_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Error de sincronización desconocido.';

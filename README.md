@@ -14,9 +14,8 @@ Aplicación de gestión de tareas en formato **Kanban**, construida con Next.js 
 - Orden manual o automático por prioridad o fecha límite.
 - Métricas del tablero: total, pendientes, en progreso, completadas, vencidas y progreso general.
 - Modo claro, oscuro o según el sistema.
-- Exportación e importación de copias de seguridad en JSON.
-- **Sincronización en tiempo real entre dispositivos** usando Supabase Realtime.
-- **Persistencia híbrida**: datos guardados en localStorage (como respaldo) y sincronizados con Supabase.
+- **Sincronización automática entre dispositivos** vinculada a tu cuenta de usuario.
+- **Persistencia híbrida**: datos guardados en localStorage (como respaldo) y sincronizados con la base de datos.
 - Diseño responsive: carrusel con ajuste por columna en móvil.
 - Accesibilidad: anuncios del arrastre en español, etiquetas ARIA y alternativa "Mover a" en el menú de cada tarjeta.
 - Indicador visual de estado de conexión en tiempo real.
@@ -196,7 +195,6 @@ supabase/
 - **Conflictos**: gana la tarea con `updatedAt` más reciente.
 - Solo se persisten las tareas; filtros y tema se mantienen en memoria o en `next-themes`.
 - La carga se hace después de montar el componente, mostrando un esqueleto para evitar desajustes de hidratación.
-- Para mover los datos a otro navegador de forma offline, usa **Datos del tablero → Exportar a JSON** y luego **Importar desde JSON**.
 
 ### Modelo de tarea
 
