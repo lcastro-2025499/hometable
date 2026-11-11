@@ -18,7 +18,14 @@ function resolveBaseUrl(): string {
     throw new Error("BETTER_AUTH_URL debe usar http o https.");
   }
 
-  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+  // `http://localhost` solo se usa para desarrollo local y builds sin red.
+  // Cualquier otro host en producción debe ser HTTPS.
+  const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  if (
+    process.env.NODE_ENV === "production" &&
+    url.protocol !== "https:" &&
+    !isLocalHost
+  ) {
     throw new Error("BETTER_AUTH_URL debe usar HTTPS en producción.");
   }
 
