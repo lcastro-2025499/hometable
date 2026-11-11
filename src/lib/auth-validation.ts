@@ -5,6 +5,19 @@ import { z } from "zod";
 // Dominio debe tener al menos un dot y TLD válido (2+ letras)
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
+const emailField = z.string().trim().regex(emailRegex, "Correo electrónico no válido.");
+
+/** Contraseña que exigen el registro y el restablecimiento. */
+export const passwordSchema = z
+  .string()
+  .min(8, "La contraseña debe tener al menos 8 caracteres.")
+  .max(128, "La contraseña no puede superar 128 caracteres.")
+  .refine((val) => /[A-Z]/.test(val), "Debe contener al menos una letra mayúscula.")
+  .refine(
+    (val) => (val.match(/\d/g) || []).length >= 2,
+    "Debe contener al menos dos números.",
+  );
+
 export const loginSchema = z.object({
   emailOrUsername: z.string().min(1, "El correo o nombre de usuario es obligatorio."),
   password: z.string().min(1, "La contraseña es obligatoria."),
@@ -22,12 +35,8 @@ export const registerSchema = z
       .min(3, "El nombre de usuario debe tener entre 3 y 15 caracteres.")
       .max(15, "El nombre de usuario debe tener entre 3 y 15 caracteres.")
       .regex(/^[a-zA-Z0-9_]+$/, "Solo se permiten letras, números y guiones bajos."),
-    email: z.string().regex(emailRegex, "Correo electrónico no válido."),
-    password: z
-      .string()
-      .min(8, "La contraseña debe tener al menos 8 caracteres.")
-      .refine((val) => /[A-Z]/.test(val), "Debe contener al menos una letra mayúscula.")
-      .refine((val) => (val.match(/\d/g) || []).length >= 2, "Debe contener al menos dos números."),
+    email: emailField,
+    password: passwordSchema,
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -38,11 +47,7 @@ export const registerSchema = z
 export type RegisterSchema = z.infer<typeof registerSchema>;
 
 /** Correo normalizado (minúsculas) reutilizable en formularios y API. */
-export const emailSchema = z
-  .string()
-  .trim()
-  .regex(emailRegex, "Correo electrónico no válido.")
-  .transform((value) => value.toLowerCase());
+export const emailSchema = emailField.transform((value) => value.toLowerCase());
 
 export const forgotPasswordSchema = z.object({
   email: emailSchema,
@@ -53,11 +58,7 @@ export type ForgotPasswordSchema = z.infer<typeof forgotPasswordSchema>;
 export const resetPasswordSchema = z
   .object({
     token: z.string().min(1, "El código de verificación es obligatorio."),
-    password: z
-      .string()
-      .min(8, "La contraseña debe tener al menos 8 caracteres.")
-      .refine((val) => /[A-Z]/.test(val), "Debe contener al menos una letra mayúscula.")
-      .refine((val) => (val.match(/\d/g) || []).length >= 2, "Debe contener al menos dos números."),
+    password: passwordSchema,
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -78,12 +79,7 @@ export const registerPayloadSchema = z.object({
     .max(15, "El nombre de usuario debe tener entre 3 y 15 caracteres.")
     .regex(/^[a-zA-Z0-9_]+$/, "Solo se permiten letras, números y guiones bajos."),
   email: emailSchema,
-  password: z
-    .string()
-    .min(8, "La contraseña debe tener al menos 8 caracteres.")
-    .max(128, "La contraseña no puede superar 128 caracteres.")
-    .refine((val) => /[A-Z]/.test(val), "Debe contener al menos una letra mayúscula.")
-    .refine((val) => (val.match(/\d/g) || []).length >= 2, "Debe contener al menos dos números."),
+  password: passwordSchema,
   name: z.string().trim().min(1, "El nombre completo es obligatorio."),
   recaptchaToken: z.string().min(1, "Completa la verificación de reCAPTCHA."),
 });
