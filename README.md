@@ -6,7 +6,7 @@ con Next.js 16 (App Router), Tailwind CSS 4, shadcn/ui, Zustand y PostgreSQL
 verdad: los datos viven en Postgres y se sincronizan entre los dispositivos de
 la misma cuenta.
 
-**Demo pública:** <https://hometable-tasks.vercel.app>
+**Demo pública:** <https://hometable.luuiscastro.me>
 
 ## Características
 
@@ -70,6 +70,7 @@ Cada variable está documentada con más detalle en [`.env.example`](.env.exampl
 | `DIRECT_URL` | Secreta · servidor | No | Conexión directa de respaldo (puerto 5432) para migraciones. |
 | `BETTER_AUTH_SECRET` | Secreta · servidor | Sí | Firma de sesiones y de la cookie del registro pendiente (32+ caracteres). |
 | `BETTER_AUTH_URL` | Servidor | Sí | Origen canónico para cookies, enlaces de correo y orígenes de confianza. HTTPS en producción. |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | Servidor | No | Orígenes extra aceptados (separados por comas), por ejemplo el dominio `vercel.app`. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Pública · cliente | Para Realtime | URL del proyecto Supabase. Sin ella se usa solo sondeo. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Pública · cliente | Para Realtime | Clave `anon`; RLS limita el acceso a las tareas propias. |
 | `SUPABASE_JWT_SECRET` | Secreta · servidor | Para Realtime | Firma los JWT HS256 de 15 min que autentican el canal. |
@@ -78,8 +79,8 @@ Cada variable está documentada con más detalle en [`.env.example`](.env.exampl
 | `RESEND_API_KEY` | Secreta · servidor | Sí | Envío del OTP y de los códigos de recuperación. |
 | `EMAIL_FROM` | Servidor | Sí | Remitente de un dominio verificado en Resend. No hay fallback. |
 
-En Vercel configura cada variable **por entorno** (Production, Preview y
-Development). Un valor de Production no se hereda en Preview.
+En Vercel configura cada variable **por entorno**. Production es obligatorio; un
+valor de Production no se hereda en Preview ni en Development.
 
 ### Base de datos
 
@@ -195,12 +196,14 @@ Reglas:
 
 La aplicación está desplegada en **Vercel** (plan Hobby):
 
-- URL de producción: <https://hometable-tasks.vercel.app>
+- URL de producción: <https://hometable.luuiscastro.me>
+- Alias de Vercel (también válido): <https://hometable-tasks.vercel.app>
 - Repositorio: `lcastro-2025499/hometable`.
 - Cada `push` a `master` genera un despliegue automático.
 - Configura todas las variables de la tabla anterior en **Settings → Environment
-  Variables**, por entorno. `SUPABASE_JWT_SECRET` es imprescindible para
-  Realtime.
+  Variables**, por entorno (Production es obligatorio). `SUPABASE_JWT_SECRET`
+  es imprescindible para Realtime y `BETTER_AUTH_TRUSTED_ORIGINS` permite que el
+  dominio de Vercel siga autenticando.
 - El proyecto usa Node 22 (`.nvmrc`) y pnpm (campo `packageManager`).
 
 Para desplegar desde cero: importa el repositorio en <https://vercel.com/new>,

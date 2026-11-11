@@ -34,11 +34,45 @@ function resolveBaseUrl(): string {
 
 const baseURL = resolveBaseUrl();
 
+/**
+ * Orígenes adicionales aceptados por Better Auth. Sirve para convivir con el
+ * dominio de Vercel mientras el canónico es el dominio propio: las cookies
+ * siguen emitiéndose contra `baseURL`, pero el login funciona desde cada host
+ * listado aquí.
+ */
+function resolveTrustedOrigins(canonical: string): string[] {
+  const raw = process.env.BETTER_AUTH_TRUSTED_ORIGINS?.trim();
+  if (!raw) return [canonical];
+
+  const extras: string[] = [];
+
+  for (const candidate of raw.split(",")) {
+    const value = candidate.trim();
+    if (!value) continue;
+
+    // `new URL` valida el formato; `.origin` normaliza y descarta rutas.
+    const url = new URL(value);
+    const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+
+    if (
+      process.env.NODE_ENV === "production" &&
+      url.protocol !== "https:" &&
+      !isLocalHost
+    ) {
+      throw new Error("BETTER_AUTH_TRUSTED_ORIGINS debe usar HTTPS en producción.");
+    }
+
+    extras.push(url.origin);
+  }
+
+  return [...new Set([canonical, ...extras])];
+}
+
 export const auth = betterAuth({
   database: pool,
   baseURL,
   secret: requireSecret("BETTER_AUTH_SECRET", 32),
-  trustedOrigins: [baseURL],
+  trustedOrigins: resolveTrustedOrigins(baseURL),
   emailAndPassword: {
     enabled: true,
     // Ninguna cuenta puede iniciar sesión hasta confirmar su correo.
