@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Tablero de tareas",
   description:
-    "Organiza tus tareas en un tablero Kanban con prioridades, fechas límite y etiquetas. Se guardan en tu navegador y pueden sincronizarse entre dispositivos.",
+    "Organiza tus tareas en un tablero Kanban con prioridades, fechas límite y etiquetas. Tus datos se guardan en tu cuenta y se sincronizan entre dispositivos.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
