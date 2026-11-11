@@ -16,6 +16,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^6.0.0",
+    "@supabase/supabase-js": "^2.119.0",
     "@types/pg": "^8.23.1",
     "@types/react-google-recaptcha": "^2.1.9",
     "better-auth": "^1.7.18",

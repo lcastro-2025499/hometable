@@ -38,6 +38,7 @@ import {
 } from "@/lib/task-utils";
 import type { Task, TaskFilters, TaskStatus } from "@/lib/types";
 import { useTaskStore } from "@/store/task-store";
+import { useTasksRealtime } from "@/hooks/use-tasks-realtime";
 import { BoardActions } from "./board-actions";
 import { BoardSkeleton } from "./board-skeleton";
 import { BoardStats } from "./board-stats";
@@ -77,6 +78,7 @@ const announcements: Announcements = {
 };
 
 export function TaskBoard() {
+  useTasksRealtime();
   const hydrated = useHydrated();
   const tasks = useTaskStore((state) => state.tasks);
   const setTasks = useTaskStore((state) => state.setTasks);
