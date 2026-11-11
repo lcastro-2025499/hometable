@@ -231,14 +231,165 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
   reservada para un futuro multi-tablero; los índices por dueño aún no tienen
   tráfico que los marque como usados.
 
-## Límites conocidos
+## Pendientes para próximas sesiones
 
-- Preview no tiene `BETTER_AUTH_URL`, así que un deployment de preview arranca
-  pero falla en el primer request de autenticación.
-- `NEXT_PUBLIC_APP_URL` sigue en Vercel sin uso en el código: pendiente de
-  borrar a mano en el dashboard.
-- Vercel mantiene Node 24 en la configuración del proyecto; `engines: "22.x"`
-  fuerza Node 22 en cada build y solo genera un aviso informativo.
+Nada de esto bloquea el producto actual. Está ordenado por impacto y cada punto
+incluye el estado real, el trabajo propuesto y cómo saber que está terminado,
+para poder convertirlo en tareas SDD sin reanalizar el contexto.
+
+### P1. Autenticación en Preview
+
+**Estado:** un deployment de Preview arranca, pero falla en el primer request de
+autenticación porque `BETTER_AUTH_URL` no está definida en ese entorno. La
+aplicación exige una URL canónica y no usa `VERCEL_URL` a propósito: las URLs de
+cada deployment son efímeras y no sirven para cookies ni enlaces de correo.
+
+**Trabajo propuesto:**
+
+1. Usar el alias estable de la rama (por ejemplo
+   `hometable-tasks-git-master-deepsitos1.vercel.app`) como
+   `BETTER_AUTH_URL` de Preview, no la URL del deployment concreto.
+2. Configurar en Preview el resto de variables: `BETTER_AUTH_SECRET`,
+   `DATABASE_URL`, `SUPABASE_JWT_SECRET`, `NEXT_PUBLIC_SUPABASE_*`,
+   `NEXT_PUBLIC_RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `RESEND_API_KEY` y
+   `EMAIL_FROM`.
+3. Añadir ese alias a los dominios permitidos del sitio de reCAPTCHA y, si se
+   necesita, a `BETTER_AUTH_TRUSTED_ORIGINS`.
+4. Decidir la base de datos: lo recomendable es un proyecto Supabase de pruebas
+   separado. Si se comparte el de producción, asumir que cualquier prueba en
+   Preview escribe datos reales.
+
+**Terminado cuando:** se puede registrar/iniciar sesión en un deployment de
+Preview, las cookies y los enlaces de correo usan el alias estable y no se
+mezclan datos de producción.
+
+### P1. Validación TLS completa en producción
+
+**Estado:** `src/lib/db.ts` cifra la conexión pero, sin `SUPABASE_DB_CA_CERT`,
+no valida la cadena TLS porque la CA de Supabase es interna
+(`SELF_SIGNED_CERT_IN_CHAIN`). Es el comportamiento documentado y funcional.
+
+**Trabajo propuesto:** descargar la CA en Supabase → Project Settings → Database
+→ SSL Configuration y configurar `SUPABASE_DB_CA_CERT` en Production (saltos de
+línea escapados como `\n`). Redesplegar y comprobar que la aplicación sigue
+conectando.
+
+**Terminado cuando:** login con credenciales falsas devuelve
+`401 INVALID_EMAIL_OR_PASSWORD` (no un error de conexión) y ya no aparece
+`SELF_SIGNED_CERT_IN_CHAIN` en los logs.
+
+### P2. Pruebas E2E con Playwright
+
+**Estado:** hay 46 pruebas unitarias con Vitest, pero ningún test de navegador.
+El registro con reCAPTCHA/Resend y la sincronización entre dispositivos se han
+validado a mano.
+
+**Trabajo propuesto:**
+
+1. Añadir Playwright (`playwright.config.ts`, `tests/e2e/`, scripts
+   `test:e2e` y `test:e2e:ui`).
+2. Cubrir primero los flujos que no dependen del correo: login con un usuario de
+   prueba ya verificado, crear/editar/mover/borrar tareas, persistencia tras
+   recargar y dos contextos de navegador con la misma cuenta (Realtime y sondeo).
+3. Para el registro completo, separar el envío de correo detrás de una interfaz
+   inyectable en `src/lib/email.ts` y usar un transporte de prueba (Mailpit o
+   SMTP local) que permita leer el OTP. No crear un endpoint que exponga el
+   código.
+4. Usar un proyecto Supabase de pruebas y limpiar los datos entre ejecuciones.
+   Nunca apuntar a producción.
+5. Añadir un job opcional de CI que se salte si faltan los secretos y suba
+   trazas/capturas cuando falle.
+
+**Terminado cuando:** `pnpm test:e2e` pasa en local, cubre login + CRUD +
+persistencia + dos contextos, y CI lo ejecuta o lo omite de forma explícita sin
+romper el pipeline.
+
+### P2. Protección de `master` en GitHub
+
+**Estado:** CI se ejecuta en cada push y PR, pero nada impide integrar con
+checks en rojo ni hacer push directo a `master`.
+
+**Trabajo propuesto:** en Settings → Branches, proteger `master` y exigir el
+check **Lint, tipos, tests y build**. Opcionalmente exigir pull request y
+prohibir force push.
+
+**Terminado cuando:** un PR con CI fallido no se puede fusionar y un push
+directo queda bloqueado (o queda documentado como excepción consciente).
+
+### P2. Limpieza de configuración en Vercel
+
+**Estado:**
+
+- `NEXT_PUBLIC_APP_URL` sigue configurada en Vercel y no se usa en el código;
+  solo aparece en este registro.
+- La configuración del proyecto usa Node 24.x; `engines: "22.x"` fuerza Node 22
+  en cada build y genera un aviso informativo.
+
+**Trabajo propuesto:** borrar `NEXT_PUBLIC_APP_URL` en todos los entornos y
+cambiar Project Settings → Node.js Version a 22.x (o aceptar el aviso y dejar
+`engines` como fuente de verdad).
+
+**Terminado cuando:** no quedan variables huérfanas y el build deja de mostrar el
+aviso de versión de Node.
+
+### P3. Mantenimiento de tablas de autenticación
+
+**Estado:** `checkRateLimit` limpia ventanas antiguas de `auth_rate_limit` de
+forma oportunista (1 % de las llamadas), pero `consumeRateLimit` —el adaptador
+de Better Auth— no lo hace. Los tokens de `verification` caducados tampoco se
+purgan. Los `pending_registration` de más de 24 h se eliminan en el siguiente
+registro.
+
+**Trabajo propuesto:** añadir la misma limpieza oportunista a
+`consumeRateLimit` o una migración con `pg_cron` que ejecute a diario:
+
+```sql
+delete from public.auth_rate_limit
+where window_started_at < now() - interval '7 days';
+
+delete from public.verification
+where "expiresAt" < now() - interval '1 day';
+```
+
+**Terminado cuando:** existe una migración idempotente o una tarea programada,
+está documentada y las tablas no crecen sin límite.
+
+### P3. Actualizar acciones de GitHub Actions
+
+**Estado:** el run correcto muestra un aviso de que `actions/checkout@v4`,
+`actions/setup-node@v4` y `pnpm/action-setup@v4` apuntan a Node 20 y el runner
+los fuerza a Node 24.
+
+**Trabajo propuesto:** actualizar a las versiones mayores actuales y volver a
+ejecutar CI. Opcionalmente fijar por SHA.
+
+**Terminado cuando:** CI sigue en verde y desaparecen las anotaciones de
+deprecación.
+
+### P4. Funcionalidades fuera del alcance actual
+
+Pendientes de producto, no de mantenimiento:
+
+- Tableros compartidos (máximo 2 por usuario) e invitaciones.
+- Chat asociado al tablero.
+- Cambio de nombre de usuario desde la interfaz.
+
+`public.board` y `tasks.board_id` ya existen con índice, pero no hay tablas de
+invitaciones ni chat. Cualquier implementación debe empezar con una spec nueva
+(`/speckit.specify`, por ejemplo `500-shared-boards`) y definir antes: membresía,
+RLS por tablero, cómo se limita Realtime a los tableros del usuario y el plan de
+migración. El JWT de Realtime actual solo lleva `sub`; habrá que añadir el
+contexto de tablero sin abrir la lectura de tareas ajenas.
+
+**Terminado cuando:** exista spec, plan y tareas aprobados, con migraciones
+reproducibles y pruebas de aislamiento entre cuentas y tableros.
+
+### P4. Detalles de documentación
+
+- Añadir a la lista de commits el commit de este registro cuando se cierre la
+  sesión.
+- Al completar cualquier punto anterior, moverlo de esta sección al historial y
+  actualizar los límites conocidos.
 
 ## Commits de la sesión
 
@@ -284,3 +435,4 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 37. `436d11f` docs: rewrite the Better Auth specification
 38. `a1e95ef` docs: refresh the README for the current architecture
 39. `1b7f349` build: allow esbuild install scripts and pin Node 22
+40. `0b9f0ee` docs: record the successful deployment and build fix
