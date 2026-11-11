@@ -8,12 +8,23 @@ import type { Task } from "./types";
  */
 
 export type SyncFailureHandler = (message: string) => void;
+export type UnauthorizedHandler = () => void;
 
 let failureHandler: SyncFailureHandler | null = null;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 /** El hook de sincronización registra aquí su estrategia de recuperación. */
 export function setSyncFailureHandler(handler: SyncFailureHandler | null): void {
   failureHandler = handler;
+}
+
+/**
+ * Se invoca cuando el servidor responde 401: la sesión ya no es válida y el
+ * usuario debe volver a iniciar sesión. El hook decide cómo limpiar la cookie
+ * y redirigir, sin que esta capa conozca el router.
+ */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  unauthorizedHandler = handler;
 }
 
 class ApiError extends Error {
@@ -49,6 +60,10 @@ async function api<T>(
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      unauthorizedHandler?.();
+    }
+
     const data = (await response.json().catch(() => null)) as {
       error?: string;
     } | null;

@@ -1,10 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { authClient } from "@/lib/auth-client";
-import { fetchRemoteTasks, setSyncFailureHandler } from "@/lib/tasks-sync";
+import {
+  fetchRemoteTasks,
+  setSyncFailureHandler,
+  setUnauthorizedHandler,
+} from "@/lib/tasks-sync";
 import { useTaskStore } from "@/store/task-store";
 
 export type SyncStatus =
@@ -43,6 +48,7 @@ const initialState: SyncState = {
 };
 
 export function useTasksSync(): TasksSyncResult {
+  const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
   const userId = session?.user?.id;
   const setUserId = useTaskStore((state) => state.setUserId);
@@ -127,6 +133,27 @@ export function useTasksSync(): TasksSyncResult {
 
     return () => setSyncFailureHandler(null);
   }, [refresh]);
+
+  // Sesión caducada o revocada mientras la pestaña sigue abierta: se limpia la
+  // cookie y se vuelve al login en lugar de dejar la UI mostrando datos viejos.
+  useEffect(() => {
+    let redirecting = false;
+
+    setUnauthorizedHandler(() => {
+      if (redirecting) return;
+      redirecting = true;
+
+      void authClient
+        .signOut()
+        .catch(() => undefined)
+        .finally(() => {
+          router.replace("/login");
+          router.refresh();
+        });
+    });
+
+    return () => setUnauthorizedHandler(null);
+  }, [router]);
 
   // Respaldo por sondeo cuando Realtime no está disponible.
   useEffect(() => {
