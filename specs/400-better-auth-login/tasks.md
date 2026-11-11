@@ -1,99 +1,153 @@
 # Tareas: Autenticación obligatoria con Better Auth
 
-**Código**: `400-better-auth-login` | **Fecha**: 2026-11-09
+**Código**: `400-better-auth-login` | **Estado**: Implementado y verificado |
+**Fecha**: 2026-11-09 | **Actualizado**: 2026-11-11
 
 ---
 
-## 1. Backend y Base de Datos
+## 1. Backend y base de datos
 
-- [x] Tarea 1.1: Instalar `better-auth` y adaptador PostgreSQL para Supabase.
-- [x] Tarea 1.2: Crear handler en `src/app/api/auth/[...all]/route.ts`.
-- [x] Tarea 1.3: Ejecutar migraciones de Better Auth en Supabase.
-- [x] Tarea 1.4: Actualizar RLS de tabla `tasks` (vincular `owner_id` obligatorio).
-- [x] Tarea 1.5: Configurar variables de entorno (secrets y site keys).
+- [x] **T1.1** - Instalar `better-auth` y usar el pool de `pg` contra el pooler de
+  Supabase.
+- [x] **T1.2** - Crear el handler en `src/app/api/auth/[...all]/route.ts`.
+- [x] **T1.3** - Versionar el esquema de Better Auth en
+  `supabase/migrations/20261109151500_better_auth_tables.sql` (`user`, `session`,
+  `account`, `verification`, `board` y `owner_id`).
+- [x] **T1.4** - Activar RLS en las tablas de autenticación y revocar grants
+  públicos (`20261110161929_enable_rls_auth_tables.sql`).
+- [x] **T1.5** - Hacer `owner_id` obligatorio con FK a `public."user"` y crear el
+  índice de `board.owner_id` (`20261112040000_*`).
+- [x] **T1.6** - Documentar `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
+  `BETTER_AUTH_TRUSTED_ORIGINS`, `DATABASE_URL` y `SUPABASE_DB_CA_CERT` en
+  `.env.example`.
 
 ## 2. Autenticación y UI
 
-- [x] Tarea 2.1: Crear componentes de formulario `AuthForm` (login, registro).
-- [x] Tarea 2.2: Implementar reCAPTCHA v2 Checkbox en `RegisterForm`.
-- [x] Tarea 2.3: Implementar validación Zod en formularios (título, email, passwords, username).
-- [x] Tarea 2.4: Implementar flujo de reset password con código Resend.
-- [x] Tarea 2.5: Desarrollar páginas `/login`, `/register`, `/forgot-password`.
+- [x] **T2.1** - Implementar `/login` con correo o usuario, contraseña y
+  «Recordarme».
+- [x] **T2.2** - Implementar `/register` con nombres, apellidos, usuario, email,
+  contraseña, confirmación y reCAPTCHA v2.
+- [x] **T2.3** - Compartir los esquemas Zod en `src/lib/auth-validation.ts`.
+- [x] **T2.4** - Implementar `/verify-email` con OTP de 6 dígitos, reenvío y
+  cooldown de 60 s.
+- [x] **T2.5** - Implementar `/forgot-password` con enlace `?token=`/`?error=` y
+  código pegado a mano.
+- [x] **T2.6** - Añadir `useRedirectIfAuthenticated` para redirigir solo cuando
+  Better Auth confirma la sesión.
 
-## 3. Seguridad e Integración
+## 3. Registro diferido
 
-- [x] Tarea 3.1: Implementar Middleware de protección (redirigir si no hay sesión).
-- [x] Tarea 3.2: Ajustar lógica de sincronización (utilizar token de sesión, no clave anónima).
-- [x] Tarea 3.3: Configurar persistencia de sesión 7 días (Remember me).
-- [x] Tarea 3.4: QA final de flujos de usuario y tests automáticos.
+- [x] **T3.1** - Crear `public.pending_registration` con email/usuario únicos, hash
+  de contraseña y OTP, expiración, intentos y cooldown.
+- [x] **T3.2** - Implementar `src/lib/pending-registration.ts`: alta «el último
+  gana», purga, verificación atómica y creación de `user` + `account`.
+- [x] **T3.3** - Implementar `src/lib/pending-cookie.ts` con HMAC y cookie
+  `httpOnly`.
+- [x] **T3.4** - Crear `/api/auth/register`, `/api/auth/verify-email` y
+  `/api/auth/resend-verification`.
+- [x] **T3.5** - Activar `disableSignUp: true` para que el único alta sea el flujo
+  con reCAPTCHA + OTP.
+- [x] **T3.6** - Verificar reCAPTCHA en el servidor de forma fail-closed y enviar el
+  OTP con Resend.
 
-## 4. Verificación por OTP y endurecimiento (2026-11-10)
+## 4. Seguridad e integración
 
-- [x] Tarea 4.1: Activar plugin `emailOTP` con verificación obligatoria (`requireEmailVerification: true`, `overrideDefaultEmailVerification: true`, `storeOTP: "hashed"`, 6 dígitos, 10 min, 5 intentos).
-- [x] Tarea 4.2: Registrar fail-closed: reCAPTCHA dentro de `/api/auth/register` y rollback de la cuenta si Resend falla (502).
-- [x] Tarea 4.3: Página `/verify-email` con formulario OTP y reenvío con cooldown de 60 s.
-- [x] Tarea 4.4: Mover el CRUD de tareas a rutas server-side autenticadas (`/api/tasks`) con SQL parametrizado.
-- [x] Tarea 4.5: Lockdown de Supabase: revocar grants/políticas de `anon`/`authenticated` y retirar `tasks` de Realtime.
-- [x] Tarea 4.6: Sustituir Realtime por sondeo + refresh; cola offline vinculada por `ownerId`.
-- [x] Tarea 4.7: QA directo (BD) y HTTP (API): aislamiento, inyección, rollback, duplicados y CSRF.
+- [x] **T4.1** - Sustituir `middleware.ts` por `src/proxy.ts` (convención de Next.js
+  16), con rutas públicas exactas y exclusión de `/api`.
+- [x] **T4.2** - Añadir CSP con nonce por petición y allowlist de reCAPTCHA y
+  Supabase (incluido `wss://`).
+- [x] **T4.3** - Exigir sesión y correo verificado en `/`, `/api/tasks` y
+  `/api/realtime/token`.
+- [x] **T4.4** - Exigir mismo origen en las escrituras.
+- [x] **T4.5** - Implementar rate limit persistente en `public.auth_rate_limit` y
+  usarlo también como almacenamiento de Better Auth.
+- [x] **T4.6** - Mantener Realtime autenticado con JWT corto y RLS de solo lectura.
+- [x] **T4.7** - Derivar `owner_id` de la sesión y revocar escrituras de PostgREST.
+- [x] **T4.8** - Manejar `401` en el cliente: cerrar sesión y redirigir a `/login`.
 
-## 5. Registro diferido hasta verificar el correo (2026-11-10)
+## 5. Verificación
 
-- [x] Tarea 5.1: Crear `public.pending_registration` (email/username únicos, hash de contraseña y del OTP, expiración, intentos, cooldown) con RLS y sin grants públicos.
-- [x] Tarea 5.2: `src/lib/pending-registration.ts`: alta "el último gana", purga de pendientes, limpieza de cuentas sin verificar antiguas, verificación atómica y creación de `user` + `account` solo con OTP correcto.
-- [x] Tarea 5.3: Reescribir `/api/auth/register` para no crear la cuenta; añadir `/api/auth/verify-email` y `/api/auth/resend-verification`.
-- [x] Tarea 5.4: Retirar el plugin `emailOTP` de Better Auth y del cliente; la verificación ya no depende de un usuario existente.
-- [x] Tarea 5.5: Actualizar `/verify-email` (redirige a `/login` tras verificar) y `/login` (aviso de correo verificado; `EMAIL_NOT_VERIFIED` apunta a completar el registro).
-- [x] Tarea 5.6: QA: registrar no crea `user`; OTP incorrecto incrementa intentos; OTP correcto crea usuario verificado y el login funciona; corrección de email/username reemplaza el pendiente; conflicto con cuenta verificada devuelve 409; expiración y reenvío con cooldown.
+- [x] **T5.1** - `pnpm lint`.
+- [x] **T5.2** - `pnpm exec next typegen`.
+- [x] **T5.3** - `pnpm exec tsc --noEmit`.
+- [x] **T5.4** - `pnpm test` (46 pruebas, incluidas `auth-validation` y
+  `realtime-token`).
+- [x] **T5.5** - `pnpm build`.
+- [x] **T5.6** - CI en `.github/workflows/ci.yml`.
+- [x] **T5.7** - QA manual de registro, OTP, login, recuperación y cierre de sesión.
 
 ---
 
-## Estado Actual: ✅ COMPLETADO
+## Estado actual
 
-La autenticación con Better Auth, la verificación por OTP y el aislamiento de tareas están implementados.
+La autenticación, el registro diferido, la verificación por OTP, la recuperación de
+contraseña, el rate limit persistente y el aislamiento de tareas están
+implementados y verificados.
 
-> ✅ El dominio `luuiscastro.me` está verificado en Resend y `EMAIL_FROM` usa `no-reply@luuiscastro.me`.
+> El dominio `luuiscastro.me` está verificado en Resend y `EMAIL_FROM` usa
+> `no-reply@luuiscastro.me`.
 
-### Archivos creados/modificados:
+### Archivos principales
 
-**Backend / Seguridad:**
-- `src/lib/auth.ts` - Configuración de Better Auth y verificación obligatoria; el plugin `emailOTP` fue retirado.
-- `src/lib/auth-client.ts` - Cliente de Better Auth con el plugin `username`.
-- `src/lib/auth-server.ts` - Helper `getSession()` para Server Components y rutas.
-- `src/lib/db.ts` - Pool único de PostgreSQL reutilizado por Better Auth y las rutas.
-- `src/lib/pending-registration.ts` - Registros pendientes: alta "el último gana", OTP propio, verificación y creación diferida de `user` + `account`.
-- `src/lib/email.ts` - Envío con Resend y plantillas HTML (código de verificación y reset) con escape.
-- `src/lib/recaptcha.ts` - Verificación reCAPTCHA server-side fail-closed.
-- `src/lib/tasks-repo.ts` - CRUD parametrizado de tareas con `owner_id` derivado de la sesión.
-- `src/app/api/auth/[...all]/route.ts` - Handler de endpoints de Better Auth.
-- `src/app/api/auth/register/route.ts` - Registro fail-closed con reCAPTCHA; solo crea el pendiente.
-- `src/app/api/auth/verify-email/route.ts` - Verifica el OTP y crea la cuenta real.
-- `src/app/api/auth/resend-verification/route.ts` - Reenvío del código con cooldown.
-- `src/app/api/tasks/route.ts` - API autenticada de tareas (GET/POST/PUT/DELETE).
-- `supabase/migrations/20261109010000_better_auth_and_tasks_owner.sql` - Migración de schema.
-- `supabase/migrations/20261110000000_lock_down_tasks.sql` - Lockdown de grants/RLS y Realtime.
-- `supabase/migrations/20261111000000_pending_registrations.sql` - Tabla `pending_registration` con RLS y sin grants públicos.
+**Backend y seguridad**
 
-**Validación:**
-- `src/lib/auth-validation.ts` - Schemas Zod para login, registro, verificación OTP, reenvío y reset.
+- `src/lib/auth.ts` — configuración de Better Auth, `disableSignUp`, verificación
+  obligatoria, sesión de 7 días, IP de confianza y rate limit persistente.
+- `src/lib/auth-client.ts` — cliente con el plugin `username`.
+- `src/lib/auth-server.ts` — `getSession()` para Server Components y rutas.
+- `src/lib/db.ts` — pool único, `DATABASE_URL` obligatoria en producción y TLS.
+- `src/lib/pending-registration.ts` — alta diferida, OTP, intentos y creación de la
+  cuenta.
+- `src/lib/pending-cookie.ts` — cookie firmada del pendiente.
+- `src/lib/email.ts` — Resend y plantillas HTML con escape.
+- `src/lib/recaptcha.ts` — verificación fail-closed.
+- `src/lib/rate-limit.ts` — límites por ruta y adaptador de Better Auth.
+- `src/lib/tasks-repo.ts` — CRUD parametrizado con `owner_id` de la sesión.
+- `src/app/api/auth/[...all]/route.ts` — endpoints de Better Auth.
+- `src/app/api/auth/register/route.ts` — registro con reCAPTCHA; solo crea el
+  pendiente.
+- `src/app/api/auth/verify-email/route.ts` — confirma el OTP y crea la cuenta.
+- `src/app/api/auth/resend-verification/route.ts` — reenvío con cooldown.
+- `src/app/api/tasks/route.ts` — API autenticada de tareas.
+- `src/app/api/realtime/token/route.ts` — JWT de Realtime.
+- `src/proxy.ts` — protección de rutas y CSP con nonce.
 
-**UI/Páginas:**
-- `src/app/login/page.tsx` - Login con aviso de correo verificado y manejo de `EMAIL_NOT_VERIFIED`.
-- `src/app/register/page.tsx` - Registro con reCAPTCHA integrado en el servidor.
-- `src/app/verify-email/` - Página y formulario de verificación por OTP; redirige a `/login` al confirmar.
-- `src/app/forgot-password/page.tsx` - Recuperación de contraseña.
-- `src/app/page.tsx` - Guard server-side de sesión y correo verificado.
-- `src/components/user-menu.tsx` - Menú de usuario con logout.
-- `src/middleware.ts` - Protección de rutas (públicas y exclusión de `/api`).
+**Validación y UI**
 
-**Estado/Sincronización:**
-- `src/lib/types.ts` - `ownerId` en el tipo `Task`.
-- `src/lib/task-mapper.ts` - Mapeo hacia/desde filas de `tasks`.
-- `src/lib/tasks-sync.ts` - Cliente de sincronización contra `/api/tasks`.
-- `src/lib/sync-queue.ts` - Cola offline por usuario.
-- `src/store/task-store.ts` - `ownerId` persistido y limpieza al cambiar de cuenta.
-- `src/hooks/use-tasks-sync.ts` - Sondeo (20 s) y reconciliación sin Realtime.
+- `src/lib/auth-validation.ts` — esquemas de login, registro, OTP, reenvío y reset.
+- `src/app/login/page.tsx` — login con correo o usuario y «Recordarme».
+- `src/app/register/page.tsx` — registro con reCAPTCHA.
+- `src/app/verify-email/` — página y formulario de OTP.
+- `src/app/forgot-password/page.tsx` — recuperación con enlace o código.
+- `src/app/page.tsx` — guard de sesión y correo verificado.
+- `src/components/user-menu.tsx` — menú de usuario con cierre de sesión.
 
-**Notas:**
-- La aplicación requiere `BETTER_AUTH_SECRET`, `DATABASE_URL`/`DIRECT_URL`, `RESEND_API_KEY` y `EMAIL_FROM` con un dominio verificado.
-- El build, el typecheck y el lint pasan exitosamente.
+**Estado y sincronización**
+
+- `src/lib/types.ts` — `ownerId` en `Task`.
+- `src/lib/task-mapper.ts` — fila de Postgres → `Task`.
+- `src/lib/tasks-sync.ts` — cliente de `/api/tasks` y manejo de `401`.
+- `src/hooks/use-tasks-sync.ts` — carga, sondeo, foco/online y `401`.
+- `src/hooks/use-tasks-realtime.ts` — canal autenticado.
+- `src/store/task-store.ts` — estado en memoria, sin `persist`.
+
+**Migraciones**
+
+- `20261109151500_better_auth_tables.sql`
+- `20261110161929_enable_rls_auth_tables.sql`
+- `20261110171312_lock_down_tasks.sql`
+- `20261110200442_pending_registrations.sql`
+- `20261111162025_auth_rate_limit.sql`
+- `20261112040000_tasks_owner_not_null_and_board_index.sql`
+
+### Correcciones respecto a versiones anteriores de este documento
+
+- Ya **existe** una suite automatizada (Vitest) y CI; la afirmación anterior de que
+  no había tests era incorrecta.
+- Realtime **no se retiró**: se mantiene con JWT corto y RLS de solo lectura. El
+  sondeo es el respaldo, no el único mecanismo.
+- La protección de rutas vive en `src/proxy.ts` (Next.js 16), no en
+  `src/middleware.ts`.
+- No existen `src/lib/sync-queue.ts` ni cola offline.
+- Las migraciones se renombraron a las versiones del historial remoto; los nombres
+  antiguos ya no son válidos.
