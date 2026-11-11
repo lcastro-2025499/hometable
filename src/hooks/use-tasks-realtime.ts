@@ -67,11 +67,31 @@ export function useTasksRealtime() {
       }
     };
 
+    const scheduleRetry = () => {
+      if (retryTimer !== undefined || disposed) return;
+
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        if (channel) {
+          void client.removeChannel(channel);
+          channel = null;
+        }
+        void connect();
+      }, RECONNECT_DELAY_MS);
+    };
+
     const connect = async () => {
       if (disposed) return;
 
       const authenticated = await applyToken().catch(() => false);
-      if (!authenticated || disposed) return;
+      if (disposed) return;
+
+      // Un fallo transitorio al pedir el token no debe dejar el canal muerto
+      // hasta el siguiente montaje: se reintenta con el mismo backoff.
+      if (!authenticated) {
+        scheduleRetry();
+        return;
+      }
 
       channel = client
         .channel(`tasks:${userId}:${Date.now()}`)
@@ -129,16 +149,7 @@ export function useTasksRealtime() {
             status === "TIMED_OUT" ||
             status === "CLOSED"
           ) {
-            if (retryTimer !== undefined || disposed) return;
-
-            retryTimer = window.setTimeout(() => {
-              retryTimer = undefined;
-              if (channel) {
-                void client.removeChannel(channel);
-                channel = null;
-              }
-              void connect();
-            }, RECONNECT_DELAY_MS);
+            scheduleRetry();
           }
         });
     };
