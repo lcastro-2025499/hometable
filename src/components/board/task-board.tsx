@@ -298,19 +298,18 @@ export function TaskBoard() {
             <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs">
               <ListTodo className="size-5" aria-hidden="true" />
             </span>
-            <div className="min-w-0">
+            <div className="hidden min-w-0 sm:block">
               <h1 className="truncate text-base leading-tight font-semibold">
                 Tablero de tareas
               </h1>
-              <p className="hidden truncate text-xs text-muted-foreground sm:block">
-                Organiza, prioriza y avanza.
-              </p>
             </div>
           </div>
           <BoardActions onCreate={() => openCreate("todo")} />
           <ConnectionStatus />
-          <UserMenu />
-          <ThemeToggle />
+          <div className="flex items-center gap-1">
+            <UserMenu />
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 
@@ -379,8 +378,7 @@ export function TaskBoard() {
       </main>
 
       <footer className="border-t px-4 py-4 text-center text-xs text-muted-foreground">
-        Tus datos se guardan en este navegador. La sincronización con Supabase es
-        opcional.
+        Sincronizado con Hometable.
       </footer>
 
       <TaskDialog

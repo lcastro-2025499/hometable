@@ -5,7 +5,6 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { STORAGE_KEY } from "@/lib/constants";
 import { createExampleTasks } from "@/lib/seed";
 import { migrateLegacyStorage } from "@/lib/storage-migration";
-import { deleteTasks, pushTasks, replaceAllTasks } from "@/lib/tasks-sync";
 import { moveTaskToColumn, normalizeOrders } from "@/lib/task-utils";
 import type { NewTaskInput, Task, TaskStatus } from "@/lib/types";
 
@@ -14,6 +13,7 @@ interface TaskStore {
   userId?: string;
   /** Dueño de las tareas guardadas en localStorage (para no mezclar cuentas). */
   ownerId?: string;
+  isDirty: boolean;
   setUserId: (userId?: string) => void;
   addTask: (input: NewTaskInput) => Task;
   addTasks: (tasks: Task[]) => void;
@@ -29,6 +29,7 @@ interface TaskStore {
   loadExamples: () => void;
   // Métodos para sincronización con Supabase
   syncFromSupabase: (tasks: Task[]) => void;
+  markSaved: () => void;
   addTaskRemote: (task: Task) => void;
   updateTaskRemote: (task: Task) => void;
   deleteTaskRemote: (id: string) => void;
@@ -98,6 +99,7 @@ export const useTaskStore = create<TaskStore>()(
       tasks: [] as Task[],
       userId: undefined,
       ownerId: undefined,
+      isDirty: false,
       setUserId: (userId) => {
         if (!userId) {
           set({ userId });
@@ -109,7 +111,7 @@ export const useTaskStore = create<TaskStore>()(
         // Si el navegador ya pertenecía a otra cuenta, no mostramos ni
         // reenviamos sus tareas al nuevo usuario.
         if (currentOwner && currentOwner !== userId) {
-          set({ userId, ownerId: userId, tasks: [] });
+          set({ userId, ownerId: userId, tasks: [], isDirty: false });
           return;
         }
 
@@ -121,20 +123,16 @@ export const useTaskStore = create<TaskStore>()(
         const userId = get().userId;
         const task = buildTask(input, before, userId);
 
-        set({ tasks: [...before, task] });
-        void pushTasks([task], userId);
-
+        set({ tasks: [...before, task], isDirty: true });
         return task;
       },
 
       addTasks: (incoming) => {
         const before = get().tasks;
-        const userId = get().userId;
         const next = normalizeOrders([...before, ...incoming]);
-        const { tasks, changed } = applyChange(before, next);
+        const { tasks } = applyChange(before, next);
 
-        set({ tasks });
-        void pushTasks(changed, userId);
+        set({ tasks, isDirty: true });
       },
 
       updateTask: (id, input) => {
@@ -175,23 +173,19 @@ export const useTaskStore = create<TaskStore>()(
                 Number.MAX_SAFE_INTEGER,
               );
 
-        const { tasks, changed } = applyChange(before, next);
-        set({ tasks });
-        void pushTasks(changed, userId);
+        const { tasks } = applyChange(before, next);
+        set({ tasks, isDirty: true });
       },
 
       deleteTask: (id) => {
         const before = get().tasks;
-        const userId = get().userId;
         const task = before.find((item) => item.id === id);
         if (!task) return undefined;
 
         const next = normalizeOrders(before.filter((item) => item.id !== id));
-        const { tasks, changed } = applyChange(before, next);
+        const { tasks } = applyChange(before, next);
 
-        set({ tasks });
-        void deleteTasks([id], userId);
-        void pushTasks(changed, userId);
+        set({ tasks, isDirty: true });
 
         return task;
       },
@@ -203,10 +197,9 @@ export const useTaskStore = create<TaskStore>()(
           ...before,
           { ...task, order: Number.MAX_SAFE_INTEGER, ownerId: task.ownerId ?? userId },
         ]);
-        const { tasks, changed } = applyChange(before, next);
+        const { tasks } = applyChange(before, next);
 
-        set({ tasks });
-        void pushTasks(changed, userId);
+        set({ tasks, isDirty: true });
       },
 
       duplicateTask: (id) => {
@@ -228,37 +221,32 @@ export const useTaskStore = create<TaskStore>()(
 
         const before = get().tasks;
         const next = normalizeOrders([...before, copy]);
-        const { tasks, changed } = applyChange(before, next);
+        const { tasks } = applyChange(before, next);
 
-        set({ tasks });
-        void pushTasks(changed, userId);
+        set({ tasks, isDirty: true });
 
         return copy;
       },
 
       moveTask: (id, status, index) => {
         const before = get().tasks;
-        const userId = get().userId;
         const next = moveTaskToColumn(
           before,
           id,
           status,
           index ?? Number.MAX_SAFE_INTEGER,
         );
-        const { tasks, changed } = applyChange(before, next);
+        const { tasks } = applyChange(before, next);
 
-        set({ tasks });
-        void pushTasks(changed, userId);
+        set({ tasks, isDirty: true });
       },
 
       setTasks: (tasks) => {
         const before = get().tasks;
-        const userId = get().userId;
         const next = normalizeOrders(tasks);
         const applied = applyChange(before, next);
 
-        set({ tasks: applied.tasks });
-        void pushTasks(applied.changed, userId);
+        set({ tasks: applied.tasks, isDirty: true });
       },
 
       toggleComplete: (id) => {
@@ -270,18 +258,15 @@ export const useTaskStore = create<TaskStore>()(
 
       clearCompleted: () => {
         const before = get().tasks;
-        const userId = get().userId;
         const completed = before.filter((task) => task.status === "done");
         if (completed.length === 0) return [];
 
         const next = normalizeOrders(
           before.filter((task) => task.status !== "done"),
         );
-        const { tasks, changed } = applyChange(before, next);
+        const { tasks } = applyChange(before, next);
 
-        set({ tasks });
-        void deleteTasks(completed.map((task) => task.id), userId);
-        void pushTasks(changed, userId);
+        set({ tasks, isDirty: true });
 
         return completed;
       },
@@ -295,8 +280,7 @@ export const useTaskStore = create<TaskStore>()(
           ownerId: task.ownerId ?? userId,
         }));
 
-        set({ tasks: normalized });
-        void replaceAllTasks(normalized, userId);
+        set({ tasks: normalized, isDirty: true });
       },
 
       loadExamples: () => {
@@ -304,7 +288,9 @@ export const useTaskStore = create<TaskStore>()(
       },
 
       // Sincronización con Supabase
-      syncFromSupabase: (tasks) => set({ tasks: normalizeOrders(tasks) }),
+      syncFromSupabase: (tasks) => set({ tasks: normalizeOrders(tasks), isDirty: false }),
+
+      markSaved: () => set({ isDirty: false }),
 
       addTaskRemote: (task) =>
         set((state) => {
