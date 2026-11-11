@@ -1,270 +1,233 @@
 # Quickstart: Sincronización en tiempo real y multi-dispositivo
 
-**Código**: 300-sync-realtime | **Fecha**: 2026-11-04 | **Estado**: Implementado (2026-11-09)
+**Código**: 300-sync-realtime | **Fecha**: 2026-11-04 | **Actualizado**: 2026-11-11
+| **Estado**: Implementado y en producción
 
 ---
 
 ## 1. Prerequisitos
 
-### 1.1 Configuración de Supabase
+### 1.1 Supabase
 
-1. **Crear cuenta en Supabase** (https://supabase.com) si aún no existe.
-2. **Usar el proyecto actual** `tfjbkvxxdglxujnrcaeb` o crear uno nuevo:
-   - Nombre: `hometable-tasks` (o similar)
-   - Región: más cercana a tu ubicación
-   - Plan: Free Tier
-3. **Obtener credenciales**:
-   - `SUPABASE_URL` → Settings → API
-   - `SUPABASE_ANON_KEY` → Settings → API (clave publicable o legacy anon)
+1. Crear una cuenta en <https://supabase.com> si no existe.
+2. Usar el proyecto actual `tfjbkvxxdglxujnrcaeb` o crear uno nuevo con plan
+   gratuito.
+3. Obtener credenciales en **Project Settings → API**:
+   - `NEXT_PUBLIC_SUPABASE_URL` (URL del proyecto, sin barra final).
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (clave `anon` o publicable).
+   - `SUPABASE_JWT_SECRET` (JWT Settings; solo servidor).
+4. Obtener la cadena del pooler en **Project Settings → Database**:
+   - `DATABASE_URL` con host `*.pooler.supabase.com`, puerto `6543`, modo
+     transaction.
+   - Opcional: `DIRECT_URL` para migraciones locales.
+5. (Opcional, recomendado) Descargar la CA en **SSL Configuration** y guardarla en
+   `SUPABASE_DB_CA_CERT` con los saltos de línea escapados como `\n`.
 
 ### 1.2 Variables de entorno
 
-Crear archivo `.env.local` en la raíz del proyecto:
+Copiar `.env.example` a `.env.local` y rellenar:
 
 ```bash
-# .env.local
+# Supabase
 NEXT_PUBLIC_SUPABASE_URL=https://[project-id].supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=[anon-public-key]
+SUPABASE_JWT_SECRET=[jwt-secret]
+DATABASE_URL=postgresql://postgres.[ref]:[password]@[region].pooler.supabase.com:6543/postgres
+DIRECT_URL=postgresql://postgres.[ref]:[password]@db.[ref].supabase.co:5432/postgres
+SUPABASE_DB_CA_CERT=
+
+# Better Auth
+BETTER_AUTH_SECRET=[32+ caracteres aleatorios]
+BETTER_AUTH_URL=http://localhost:3000
+BETTER_AUTH_TRUSTED_ORIGINS=
+
+# reCAPTCHA y correo
+NEXT_PUBLIC_RECAPTCHA_SITE_KEY=[site-key]
+RECAPTCHA_SECRET_KEY=[secret-key]
+RESEND_API_KEY=re_[...]
+EMAIL_FROM=no-reply@[dominio-verificado]
 ```
 
-### 1.3 Base de datos (ejecutar migración)
+### 1.3 Base de datos
 
-La fuente de verdad es
-`supabase/migrations/20261109000000_align_tasks_schema.sql`. Es idempotente y
-reproducible desde un proyecto vacío: crea la tabla, restricciones, trigger,
-índices, RLS, permisos y publicación Realtime.
-
-Opciones para aplicarla:
+Aplicar las migraciones de `supabase/migrations/` en orden:
 
 ```bash
-# Con Supabase CLI vinculado al proyecto
+# Con la CLI de Supabase vinculada al proyecto
 supabase db push
 ```
 
-O copiar el contenido del archivo en **SQL Editor → Run**. La migración incluye:
+O copiar cada archivo en **SQL Editor → Run**, empezando por
+`20261109151132_align_tasks_schema_and_realtime.sql` y terminando por
+`20261112040000_tasks_owner_not_null_and_board_index.sql`.
 
-```sql
-grant select, insert, update, delete on table public.tasks to anon, authenticated;
+> **Importante**: los nombres de archivo usan las mismas versiones que el historial
+> remoto. No apliques DDL desde el panel sin crear antes el archivo local
+> correspondiente; eso reintroduce divergencia entre el repositorio y el proyecto.
 
-alter publication supabase_realtime add table public.tasks;
-```
+La migración deja:
 
-> Sin el `GRANT`, RLS no es suficiente y PostgREST devuelve
-> `42501 permission denied for table tasks`.
+- `public.tasks` con `owner_id NOT NULL` y FK a `public."user"`.
+- Trigger `update_tasks_updated_at` con `search_path = ''`.
+- Índices `(owner_id, status, "order")` y `(owner_id, created_at desc)`.
+- RLS de solo lectura por `auth.jwt() ->> 'sub'` para `authenticated`.
+- `tasks` en la publicación `supabase_realtime` con `REPLICA IDENTITY FULL`.
+- Tablas de Better Auth, `pending_registration`, `auth_rate_limit` y `board` sin
+  grants públicos.
 
 ---
 
-## 2. Instalación
-
-La dependencia `@supabase/supabase-js` ya está en `package.json`.
+## 2. Instalación y puertas
 
 ```bash
-# Instalar dependencias del proyecto
 pnpm install
-
-# Verificar tipos
 pnpm exec next typegen
 pnpm exec tsc --noEmit
-
-# Lint y build
 pnpm lint
+pnpm test
 pnpm build
-
-# Desarrollo
 pnpm dev
 ```
+
+La aplicación estará en <http://localhost:3000>. Sin sesión, `/` redirige a
+`/login`; sin correo verificado, redirige a `/verify-email`.
 
 ---
 
 ## 3. Pruebas manuales (QA)
 
-### ✅ Caso 0: Verificación inicial
+### Caso 0: sesión y persistencia
 
-1. Navegar a `http://localhost:3000`
-2. Verificar que el tablero carga y funciona normalmente
-3. Crear, editar, borrar una tarea
-4. Refrescar página → Verificar que persiste en localStorage
+1. Registrarse, recibir el OTP y verificar el correo.
+2. Iniciar sesión y comprobar que el tablero carga desde el servidor.
+3. Crear, editar, duplicar y borrar una tarea.
+4. Recargar: las tareas y el orden se conservan (vienen de PostgreSQL).
 
-### ✅ Caso 1: Sincronización entre 2 pestañas / dispositivos
+### Caso 1: dos pestañas o dispositivos
 
-**Pre-requisito**: Haber ejecutado el schema de Supabase
+1. Abrir `http://localhost:3000` en dos ventanas con la misma cuenta.
+2. Crear una tarea en A: aparece en B sin recargar.
+3. Arrastrarla a «En progreso» en A: se mueve en B.
+4. Editar en B: el cambio llega a A.
+5. Borrar en A: desaparece en B.
 
-1. Abrir `http://localhost:3000` en ventana A
-2. Abrir `http://localhost:3000` en ventana B (otra pestaña)
-3. En ventana A:
-   - Crear una nueva tarea: "Tarea de prueba"
-   - Verificar que aparece en ventana B sin refresh
-4. En ventana A:
-   - Arrastrar la tarea a "En progreso"
-   - Verificar que se mueve en ventana B
-5. En ventana B:
-   - Editar la descripción de la tarea
-   - Verificar que se actualiza en ventana A
-6. En ventana A:
-   - Borrar la tarea
-   - Verificar que desaparece en ventana B
+### Caso 2: Realtime deshabilitado
 
-### ✅ Caso 2: Conexión offline / online
+1. Vaciar temporalmente `SUPABASE_JWT_SECRET` o `NEXT_PUBLIC_SUPABASE_URL` y
+   reiniciar.
+2. El tablero sigue funcionando; el sondeo de 30 s propaga los cambios.
+3. Restaurar las variables: el canal vuelve a conectarse y resincroniza.
 
-1. **Desconectar**: 
-   - Abrir DevTools → Network → Offline
-   - Navegar a `http://localhost:3000`
-   - Verificar que el tablero carga y muestra badge "Sin conexión"
-2. **Crear tarea offline**:
-   - Crear tarea "Offline task"
-   - Verificar que aparece y persiste
-3. **Reconectar**:
-   - DevTools → Network → Online
-   - Verificar que el badge cambia a "Sincronizado"
-   - Verificar que la tarea "Offline task" se sincronizó a Supabase
+### Caso 3: sesión caducada
 
-### ✅ Caso 3: Migración de datos locales
+1. Cerrar la sesión en el servidor o borrar la cookie de sesión.
+2. Intentar crear o borrar una tarea.
+3. La app recibe `401`, cierra la sesión y redirige a `/login`.
 
-1. **Preparar datos locales**:
-   ```javascript
-   // En consola del navegador
-   localStorage.setItem('taskboard:v1', JSON.stringify({
-     tasks: [{
-       id: 'test-migration',
-       title: 'Tarea de migración',
-       description: 'Test migration',
-       status: 'todo',
-       priority: 'high',
-       dueDate: '2026-12-31',
-       tags: ['test'],
-       order: 0,
-       createdAt: new Date().toISOString(),
-       updatedAt: new Date().toISOString()
-     }]
-   }));
-   ```
-2. **Refrescar la página**
-3. **Verificar**:
-   - `taskboard:v1` se copia a `taskboard:v2` y se conserva como respaldo.
-   - Aparece el diálogo de sincronización con la tarea local.
-   - Al aceptar, la tarea aparece en Supabase (verificar en dashboard).
-   - Si se rechaza, la tarea sigue visible y el aviso se puede reabrir desde el badge.
+### Caso 4: aislamiento entre cuentas
 
-### ✅ Caso 4: Múltiples dispositivos físicos
+1. Crear dos cuentas verificadas.
+2. Con la cuenta A, comprobar que no aparecen tareas de B.
+3. Intentar `GET /api/tasks` con la cookie de A y comprobar que solo devuelve las
+   tareas de A.
+4. En Supabase, verificar que la policy de Realtime solo entrega filas cuyo
+   `owner_id` coincide con `sub`.
 
-1. Tener el proyecto en Vercel (despliegue actual)
-2. En dispositivo 1: `https://hometable.vercel.app`
-3. En dispositivo 2: mismo URL
-4. Crear tarea en dispositivo 1
-5. Verificar que aparece en dispositivo 2 en tiempo real
-6. Realizar drag-and-drop en dispositivo 2
-7. Verificar que se actualiza en dispositivo 1
+### Caso 5: rendimiento y accesibilidad
 
-### ✅ Caso 5: Performance
-
-1. Crear 100 tareas (usar seed)
-2. Medir tiempo de carga inicial (debe ser < 2s)
-3. Realizar 10 operaciones de drag
-4. Verificar que no hay lag en la UI
-5. Revalidar con 500 tareas (si es necesario)
+1. Cargar 100+ tareas y medir la carga inicial (objetivo < 2 s).
+2. Realizar diez movimientos de drag & drop sin lag perceptible.
+3. Probar ratón, táctil y teclado; comprobar los anuncios ARIA y «Mover a».
+4. Revisar temas claro, oscuro y sistema, y el diseño responsive.
+5. Consola del navegador sin errores.
 
 ---
 
 ## 4. Verificación de estado
 
-### 4.1 Estado de conexión visual
+| Estado | Badge | Significado |
+|--------|-------|-------------|
+| Cargando | Esqueleto | Primera lectura de `/api/tasks` |
+| Conectado | «Sincronizado» + hora | Realtime activo o sondeo correcto |
+| Sin conexión | «Sin conexión» | El navegador no alcanza el servidor |
+| Error | Rojo con tooltip | Fallo de lectura/escritura; se reintenta |
 
-| Estado | Badge | Color | Tooltip |
-|--------|-------|-------|---------|
-| Conectado | "Sincronizado" | Verde | Datos en Supabase |
-| Sin conexión | "Sin conexión" | Gris | Cambios en cola local |
-| Conectando | "Conectando..." | Ámbar | Estableciendo conexión |
-| Error | "Error" | Rojo | Reintento automático |
-| Supabase ausente | "Solo local" | Gris | Modo local |
-
-### 4.2 Console logs (desarrollo)
-
-```
-[sync] Estado: online
-[sync] Conectado a Supabase Realtime
-[sync] Recibido evento: INSERT
-[sync] Tarea añadida: uuid-xxx
-[sync] Sincronización completa
-```
+El badge es informativo: la edición no se bloquea por él.
 
 ---
 
-## 5. Debugging
+## 5. Depuración
 
-### 5.1 Verificar suscripción Realtime
+### 5.1 Suscripción Realtime
 
-- Abre DevTools → Network → WS y busca la conexión a
+- DevTools → Network → WS: buscar
   `wss://[proyecto].supabase.co/realtime/v1/websocket`.
-- En Supabase Dashboard → Realtime Inspector puedes ver los canales activos y los
-  eventos.
-- En la app, el badge debe pasar de "Conectando..." a "Sincronizado".
+- Pestaña Console: mensajes `[realtime]` del hook.
+- Supabase Dashboard → Realtime Inspector: canales activos y eventos.
+- Si el canal no se autentica, revisar `SUPABASE_JWT_SECRET` y que
+  `/api/realtime/token` responda `200`.
 
-### 5.2 Verificar datos en Supabase
+### 5.2 Datos en Supabase
 
-En dashboard de Supabase → Table Editor → tasks:
-- Verificar que se crean/editan/borran registros
-- Verificar timestamps
-- Verificar orden correcto
+- Table Editor → `tasks`: comprobar filas, `owner_id`, fechas y orden.
+- SQL Editor:
 
-### 5.3 Verificar localStorage fallback
+```sql
+select id, title, owner_id, due_date, "order", updated_at
+from public.tasks
+order by updated_at desc
+limit 20;
+```
+
+### 5.3 Comprobar que no hay persistencia local de tareas
 
 ```javascript
-// En consola
-localStorage.getItem('taskboard:v2')          // estado actual
-localStorage.getItem('taskboard:v1')          // respaldo histórico
-localStorage.getItem('taskboard:sync-queue')  // operaciones pendientes
+// En la consola del navegador
+Object.keys(localStorage);
+// Solo debería aparecer la clave del tema.
+```
+
+### 5.4 Comprobar la API
+
+```bash
+curl -i http://localhost:3000/api/tasks
+# Sin cookie: 401 JSON
 ```
 
 ---
 
-## 6. Límite de pruebas
-
-### 6.1 Límite gratuito Supabase
+## 6. Límites del plan gratuito
 
 | Recurso | Límite mensual | Uso estimado |
 |---------|----------------|--------------|
 | Database size | 500 MB | ~5 MB |
-| Rows | 500,000 | ~5,000 tasks |
-| Realtime messages | 500,000 | ~10,000 operaciones/mes |
+| Realtime messages | 500 000 | ~10 000 operaciones/mes |
+| API requests | 2 000 000 | Lecturas, sondeo y escrituras |
 
-**Conclusión**: El límite es más que suficiente para el MVP.
+**Conclusión**: suficiente para el producto actual.
 
 ---
 
-## 7. Checklist de QA
+## 7. Checklist
 
-### Verificado automáticamente / por API
+### Verificado automáticamente
 
-- [x] Esquema, trigger, índices, RLS, `GRANT` y publicación Realtime aplicados.
-- [x] REST: INSERT `201`, UPDATE `200`, SELECT `200`, DELETE `200`.
+- [x] Esquema, trigger, índices, RLS y publicación Realtime aplicados.
+- [x] Migraciones ordenadas y reproducibles.
+- [x] API autenticada: `401` sin sesión, `403` sin verificar y `403` desde otro
+  origen.
 - [x] Realtime: INSERT, UPDATE y DELETE recibidos por WebSocket.
-- [x] Build de producción exitoso.
-- [x] `pnpm lint` y `tsc --noEmit` sin errores.
+- [x] Aislamiento por `owner_id` y `sub`.
+- [x] `pnpm lint`, `next typegen`, `tsc --noEmit`, `pnpm test` y `pnpm build` en
+  verde.
+- [x] CI configurada.
 
-### Pendiente de validación visual humana
+### Verificado manualmente
 
-- [ ] Caso 0: Tablero funcional y persistencia tras recargar.
-- [ ] Caso 1: Sincronización entre 2 pestañas.
-- [ ] Caso 2: Offline → Online con cola de cambios.
-- [ ] Caso 3: Diálogo de migración de tareas locales.
-- [ ] Caso 4: Sincronización entre 2 dispositivos físicos.
-- [ ] Caso 5: Performance con 100+ tareas.
-- [ ] Badge de conexión y tooltips correctos.
-- [ ] Sin errores en consola del navegador.
+- [x] Tablero funcional y persistencia tras recargar.
+- [x] Sincronización entre dos dispositivos el 11/11/2026.
+- [x] Escrituras correctas con Realtime deshabilitado.
+- [x] Aislamiento entre cuentas.
+- [x] Cabeceras de seguridad sin bloquear reCAPTCHA ni el WebSocket.
 
-Los resultados detallados están en `QA.md`.
-
----
-
-## 8. Estado de los pasos
-
-1. ✅ Configurar Supabase y variables de entorno (local y Vercel).
-2. ✅ Ejecutar migración de base de datos.
-3. ✅ Implementar cliente Supabase singleton nullable.
-4. ✅ Implementar hook `use-supabase`.
-5. ✅ Modificar task-store con métodos remotos.
-6. ✅ UI de estado de conexión y diálogo de migración.
-7. ✅ Script de migración `taskboard:v1` → `taskboard:v2`.
-8. ✅ Validación REST y Realtime contra el proyecto real.
-9. ⏳ QA visual manual en navegador (ver `QA.md`).
-10. ⏳ Push a `master` y verificación del despliegue en Vercel.
+Los detalles están en `QA.md`.

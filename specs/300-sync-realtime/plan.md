@@ -1,62 +1,64 @@
 # Plan de implementación: Sincronización en tiempo real y multi-dispositivo
 
-**Rama**: `master` (trabajo directo, sin rama de feature) | **Fecha**: 2026-11-09 | **Especificación**: [spec.md](./spec.md)
+**Rama**: `master` (trabajo directo, sin rama de feature) | **Fecha**: 2026-11-09
+| **Actualizado**: 2026-11-11 | **Especificación**: [spec.md](./spec.md)
 
 **Entrada**: Especificación de `specs/300-sync-realtime/spec.md`
 
 ## Resumen
 
-Se añade a Hometable una capa opcional de sincronización con Supabase sin romper el
-modo local. `localStorage` (`taskboard:v2`) sigue siendo la fuente de respaldo; cada
-mutación del store se envía a Postgres por REST y los demás clientes reciben los
-cambios por Supabase Realtime. Si no hay variables de entorno o conexión, la app
-funciona como antes y encola las operaciones pendientes.
+Hometable sincroniza el tablero de una misma cuenta entre dispositivos. La API
+`/api/tasks` valida la sesión de Better Auth y concentra todo el CRUD en SQL
+parametrizado; PostgreSQL es la única fuente de verdad. Los demás dispositivos
+reciben los cambios por Supabase Realtime con un JWT corto y RLS, y un sondeo cada
+30 segundos actúa como respaldo.
 
-Los cambios principales están en `src/store/task-store.ts`, `src/hooks/use-tasks-sync.ts`,
-`src/lib/supabase-sync.ts`, `src/lib/sync-queue.ts`, `src/lib/task-sync.ts`,
-`src/lib/task-mapper.ts`, `src/lib/storage-migration.ts` y
-`src/components/ui/connection-status.tsx`. Se verifican con las puertas del proyecto
-y una prueba real de REST + Realtime.
+El trabajo se apoya en `src/app/api/tasks/route.ts`, `src/lib/tasks-repo.ts`,
+`src/lib/tasks-sync.ts`, `src/hooks/use-tasks-sync.ts`,
+`src/hooks/use-tasks-realtime.ts`, `src/lib/realtime-token.ts`,
+`src/lib/supabase-client.ts`, `src/lib/task-mapper.ts`, `src/store/task-store.ts`
+y las migraciones de `supabase/migrations/`.
 
 ## Contexto técnico
 
 - **Lenguaje/Versión**: TypeScript 5 en modo `strict`; Node.js 22 y pnpm 12.
 - **Framework**: Next.js 16 (App Router, Turbopack) con React 19.
-- **Dependencias principales**: Zustand 5 (`persist`), Zod 4, React Hook Form,
-  `@dnd-kit/core` + `@dnd-kit/sortable`, date-fns 4 (locale `es`), sonner,
-  next-themes, lucide-react, Radix UI, shadcn/ui y `@supabase/supabase-js` 2.x.
+- **Dependencias principales**: Zustand 5 (sin `persist`), Zod 4, React Hook Form,
+  `@dnd-kit/core` + `@dnd-kit/sortable`, date-fns 4, sonner, next-themes,
+  lucide-react, Radix UI, shadcn/ui, `@supabase/supabase-js` 2.x, Better Auth 1.x,
+  `pg` 8.x y Vitest 3.
 - **Estilos**: Tailwind CSS 4 y tokens de `src/app/globals.css`.
-- **Almacenamiento**: `localStorage` con clave `taskboard:v2`; respaldo de
-  `taskboard:v1` durante la migración; cola en `taskboard:sync-queue`.
-- **Servicio externo**: Supabase (Postgres + PostgREST + Realtime) en capa gratuita.
-- **Pruebas**: no hay framework automatizado. Puertas oficiales: `pnpm lint`,
-  `pnpm exec next typegen` + `pnpm exec tsc --noEmit`, `pnpm build` y QA manual.
+- **Almacenamiento**: PostgreSQL en Supabase. Solo el tema vive en `localStorage`.
+- **Autenticación**: Better Auth con registro diferido y correo verificado.
+- **Pruebas**: Vitest para funciones puras; QA manual para UI y dos dispositivos.
 - **Plataforma objetivo**: navegadores modernos en escritorio, tableta y móvil;
   despliegue en Vercel.
 - **Objetivos de rendimiento**: interacción inmediata con cientos de tareas; se
-  envían solo las tareas que cambiaron.
+  envían solo las tareas que cambiaron, con un máximo de 500 por petición.
 - **Restricciones**: accesibilidad con teclado y ARIA, interfaz en español,
   responsive, temas claro/oscuro/sistema, `master` siempre desplegable.
 
 ## Verificación constitucional
 
-- **I. Dominio tipado**: `Task` no cambia; se añaden tipos generados (`TaskRow`,
-  `TaskInsert`) y el mapeo `taskToRow`/`rowToTask`. Zod sigue validando formularios e
-  importaciones.
-- **II. Persistencia**: se versiona la clave a `taskboard:v2` con migración automática
-  desde `taskboard:v1` y se conserva el respaldo. La app sigue funcionando offline.
-- **III. Accesibilidad/UI**: el badge tiene `aria-live` y el diálogo usa componentes
-  accesibles de `src/components/ui/`. No se altera el drag & drop ni la alternativa
-  "Mover a".
-- **IV. Componentes/fronteras**: se reutilizan `src/components/ui/`, `task-utils` y el
-  store. Los efectos de Realtime viven en un hook cliente; el cliente Supabase es
-  singleton y nullable.
-- **V. Verificación**: el plan incluye las tres puertas y el QA manual documentado en
-  `QA.md`.
-- **VI. Alcance**: no hay backend propio; se permite un servicio externo gratuito
-  (Supabase) según la constitución v2.1.0.
+- **I. Dominio tipado**: `Task` se deriva de las constantes; Zod valida formularios,
+  payloads del servidor y filas antes de mapearlas. `pnpm test` cubre
+  `task-utils`, `validation`, `auth-validation`, `task-mapper`, `http` y
+  `realtime-token`.
+- **II. Fuente de verdad**: el store no usa `persist`; la carga inicial y cada
+  recuperación vienen de `/api/tasks`. No hay cola offline ni reconciliación.
+- **III. Accesibilidad/UI**: el badge tiene `aria-live`; el drag & drop y la
+  alternativa «Mover a» se mantienen.
+- **IV. Componentes/fronteras**: se reutilizan `src/components/ui/`,
+  `task-utils` y el store. El SQL vive en `tasks-repo.ts`; los efectos de Realtime
+  viven en hooks cliente.
+- **V. Seguridad**: sesión, correo verificado, mismo origen, SQL parametrizado,
+  CSP con nonce, RLS de solo lectura y rate limit persistente.
+- **VI. Realtime**: JWT de 15 minutos, policy por `sub`, `REPLICA IDENTITY FULL` y
+  sondeo de respaldo.
+- **VII. Verificación**: lint, typegen, tsc, test, build y QA manual documentado en
+  `QA.md`; CI ejecuta las cinco puertas automatizadas.
 
-Sin violaciones: el plan cumple la constitución v2.1.0.
+Sin violaciones: el plan cumple la constitución v3.0.0.
 
 ## Estructura del proyecto
 
@@ -67,7 +69,7 @@ specs/300-sync-realtime/
 ├── spec.md              # Especificación
 ├── plan.md              # Este archivo
 ├── research.md          # Decisiones e investigación
-├── data-model.md        # Modelo de datos y migración
+├── data-model.md        # Modelo de datos y migraciones
 ├── quickstart.md        # Configuración y pruebas manuales
 ├── QA.md                # Resultados del QA
 └── tasks.md             # Tareas y estado
@@ -77,32 +79,34 @@ specs/300-sync-realtime/
 
 ```text
 src/
+├── proxy.ts                  # rutas públicas y CSP con nonce
 ├── app/
-│   ├── layout.tsx           # metadatos y tema
-│   └── page.tsx             # monta el tablero
+│   ├── page.tsx              # guard de sesión
+│   └── api/
+│       ├── tasks/route.ts    # GET/POST/DELETE autenticados
+│       └── realtime/token/route.ts
 ├── components/
-│   ├── board/               # tablero, columnas, tarjetas, toolbar, métricas
-│   ├── tasks/               # diálogos, formulario, etiquetas y fecha límite
-│   └── ui/                  # shadcn/ui + connection-status.tsx
+│   ├── board/                # tablero, columnas, tarjetas, toolbar, métricas
+│   ├── tasks/                # diálogos, formulario, etiquetas y fecha límite
+│   └── ui/                   # shadcn/ui + connection-status
 ├── hooks/
-│   ├── use-hydrated.ts
-│   ├── use-supabase.ts
-│   └── use-tasks-sync.ts
+│   ├── use-tasks-sync.ts     # carga, sondeo, foco/online y 401
+│   └── use-tasks-realtime.ts # canal autenticado
 ├── lib/
-│   ├── constants.ts         # taskboard:v2 y taskboard:v1
-│   ├── storage-migration.ts
-│   ├── supabase.ts
-│   ├── supabase-sync.ts
-│   ├── sync-queue.ts
-│   ├── task-mapper.ts
-│   ├── task-sync.ts
+│   ├── db.ts                 # pool único y TLS
+│   ├── realtime-token.ts     # firma del JWT
+│   ├── supabase-client.ts    # cliente nullable
+│   ├── task-mapper.ts        # fila → Task
+│   ├── tasks-repo.ts         # SQL parametrizado
+│   ├── tasks-sync.ts         # cliente de /api/tasks
 │   ├── task-utils.ts
 │   ├── types.ts
 │   ├── types/supabase.ts
 │   └── validation.ts
 └── store/
     └── task-store.ts
-supabase/migrations/20261109000000_align_tasks_schema.sql
+supabase/migrations/          # historial ordenado
+tests/                        # Vitest
 ```
 
 ## Fases de implementación
@@ -110,37 +114,37 @@ supabase/migrations/20261109000000_align_tasks_schema.sql
 ### Fase 0: Investigación (`research.md`)
 
 - [x] Elegir Supabase por Realtime gratuito y compatibilidad con Vercel.
-- [x] Confirmar UUID en cliente y resolución de conflictos por `updatedAt`.
 - [x] Descartar WebSocket autohospedado en Vercel.
-- [x] Documentar límites del plan gratuito.
+- [x] Decidir que el CRUD vive en el servidor y Realtime es solo lectura.
+- [x] Documentar límites del plan gratuito y la política de migraciones.
 
 ### Fase 1: Diseño (`data-model.md`, `quickstart.md`)
 
 - [x] Definir tabla, mapeo, índices, trigger, RLS y publicación Realtime.
-- [x] Definir flujo de escritura optimista, cola offline y reconciliación.
-- [x] Documentar migración `taskboard:v1` → `taskboard:v2`.
-- [x] Documentar configuración local y en Vercel.
+- [x] Definir el flujo de escritura optimista y la recarga ante fallos.
+- [x] Documentar la configuración local, en Vercel y en Supabase.
+- [x] Documentar el orden y la reproducibilidad de las migraciones.
 
 ### Fase 2: Implementación (`tasks.md`)
 
-- [x] Cliente Supabase nullable y hook de acceso.
-- [x] Tipos generados y mapeo `Task` ↔ fila.
-- [x] Writers REST, cola offline y reconciliación.
-- [x] Store con sincronización de todas las mutaciones.
-- [x] Hook de carga inicial, Realtime, online/offline y migración.
-- [x] Badge de estado y diálogo de tareas locales.
-- [x] Migración SQL versionada y aplicada.
+- [x] API autenticada de tareas con SQL parametrizado y límite de lote.
+- [x] Store en memoria con mutaciones optimistas y `replaceFromServer`.
+- [x] Cliente de API con manejo de `401` y notificación de fallos.
+- [x] Hook de carga inicial, sondeo, foco, reconexión y recuperación.
+- [x] Token de Realtime y canal autenticado con mapeo de eventos.
+- [x] Migraciones versionadas, RLS, índices, rate limit y publicación.
+- [x] Pruebas unitarias de las funciones críticas.
 
 ### Fase 3: Verificación
 
 - [x] `pnpm lint`.
 - [x] `pnpm exec next typegen`.
 - [x] `pnpm exec tsc --noEmit`.
+- [x] `pnpm test` (46 pruebas).
 - [x] `pnpm build`.
-- [x] Prueba REST real: INSERT 201, UPDATE 200, SELECT 200, DELETE 200.
-- [x] Prueba Realtime real: INSERT, UPDATE y DELETE recibidos.
-- [ ] QA visual manual en navegador (drag & drop, diálogo, offline/online y dos
-  dispositivos). Requiere intervención humana; ver `QA.md`.
+- [x] Realtime real: INSERT, UPDATE y DELETE recibidos por WebSocket.
+- [x] QA manual con dos dispositivos el 11/11/2026.
+- [x] CI en `.github/workflows/ci.yml`.
 
 ## Comandos de verificación
 
@@ -149,6 +153,7 @@ supabase/migrations/20261109000000_align_tasks_schema.sql
 | `pnpm lint` | Después de cada bloque de cambios | Sin errores ni warnings nuevos |
 | `pnpm exec next typegen` | Antes de comprobar tipos | Tipos de rutas generados |
 | `pnpm exec tsc --noEmit` | Después de tocar tipos, props o validación | Sin errores de tipos |
+| `pnpm test` | Después de tocar dominio o validación | 46 pruebas en verde |
 | `pnpm build` | Antes de cerrar la funcionalidad | Build de producción correcto |
 | `pnpm dev` | Durante el QA manual | Tablero funcional en `localhost:3000` |
 
@@ -156,32 +161,34 @@ supabase/migrations/20261109000000_align_tasks_schema.sql
 
 - **Carrera al conectar Realtime**: el stream de replicación tarda un instante en
   arrancar tras el join. La app no depende de un evento inmediato: hace una carga
-  inicial por REST y luego escucha cambios.
-- **Pérdida de datos offline**: cola persistente en `localStorage`, vaciado antes de
-  reconciliar y reintento al volver `online`.
-- **Conflictos entre dispositivos**: resolución determinista por `updatedAt`.
-- **Permisos de API**: RLS por sí solo no basta; la migración incluye `GRANT` a
-  `anon` y `authenticated`.
-- **Migración desde v1**: se copia sin borrar `taskboard:v1`; si falla el
-  almacenamiento, la app arranca vacía sin romperse.
-- **Build de Vercel roto**: `pnpm build` local antes de integrar a `master`.
-- **Clave pública expuesta**: es esperado en Supabase; la protección real es RLS. No
-  se usan claves secretas en el cliente.
+  inicial por API y luego escucha cambios.
+- **WebSocket caído**: sondeo cada 30 s, refresco al recuperar el foco y al volver
+  la conexión.
+- **Sesión caducada**: `401` cierra la sesión y redirige a `/login` en lugar de
+  mostrar datos viejos.
+- **Escritura fallida**: se avisa al usuario y se recarga el estado autoritativo.
+- **Tareas ajenas**: `owner_id` se deriva de la sesión; RLS filtra los eventos por
+  `sub`. Nunca se acepta un dueño enviado por el cliente.
+- **Tokens de Realtime**: caducan a los 15 minutos y el hook los renueva antes de
+  que expiren.
+- **Migraciones divergentes**: los archivos locales usan las mismas versiones que el
+  historial remoto; no se crean migraciones desde el panel.
+- **Build de Vercel roto**: `pnpm build` y CI antes de integrar a `master`.
 
 ## Complejidad justificada
 
-La dependencia `@supabase/supabase-js` y el servicio externo son necesarios para
-Realtime sin autohospedar WebSockets. Es una excepción permitida por la constitución
-v2.1.0 y no elimina el modo local.
+`@supabase/supabase-js` se mantiene solo para Realtime. El resto del acceso a datos
+usa `pg` desde el servidor, lo que evita exponer PostgREST y permite derivar el
+dueño de la sesión. La dependencia es una excepción permitida por la constitución
+v3.0.0 y no sustituye a PostgreSQL como fuente de verdad.
 
 ## Seguimiento
 
 - [x] Especificación clarificada y sin `[NEEDS CLARIFICATION]` pendientes.
 - [x] Verificación constitucional aprobada.
 - [x] `tasks.md` actualizado con el estado real.
-- [x] `pnpm lint`, `pnpm exec next typegen` + `pnpm exec tsc --noEmit` y
-  `pnpm build` en verde.
-- [x] Sincronización REST y Realtime validada contra el proyecto real.
-- [ ] QA visual manual completado y documentado.
-- [x] Despliegue de `master` en Vercel verificado (`READY`, URL `200`, variables
-  públicas presentes en el bundle).
+- [x] `pnpm lint`, `next typegen`, `tsc --noEmit`, `pnpm test` y `pnpm build` en
+  verde.
+- [x] Realtime validado contra el proyecto real.
+- [x] QA manual con dos dispositivos completado y documentado.
+- [x] `master` desplegado en Vercel y verificado.

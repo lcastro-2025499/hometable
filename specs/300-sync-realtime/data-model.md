@@ -1,37 +1,40 @@
 # Data Model: Sincronización en tiempo real y multi-dispositivo
 
-**Código**: 300-sync-realtime | **Fecha**: 2026-11-04 | **Actualizado**: 2026-11-09
+**Código**: 300-sync-realtime | **Fecha**: 2026-11-04 | **Actualizado**: 2026-11-11
 
 ---
 
 ## 1. Modelo de dominio
 
-La interfaz `Task` no cambia (`src/lib/types.ts`):
+La interfaz `Task` vive en `src/lib/types.ts`:
 
 ```typescript
 export interface Task {
-  id: string;             // UUID v4 generado en el cliente
+  id: string;             // UUID generado en el cliente
   title: string;          // Máx. 120 caracteres
   description?: string;   // Máx. 1000 caracteres
   status: TaskStatus;     // 'todo' | 'in_progress' | 'done'
   priority: TaskPriority; // 'low' | 'medium' | 'high' | 'urgent'
-  dueDate?: string;       // yyyy-MM-dd
-  tags: string[];
+  dueDate?: string;       // yyyy-MM-dd, sin hora ni zona horaria
+  tags: string[];         // Máx. 8 etiquetas de 24 caracteres
   order: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  ownerId?: string;       // Lo fuerza el servidor desde la sesión
 }
 ```
+
+`TaskStatus` y `TaskPriority` se derivan de `TASK_STATUSES` y `TASK_PRIORITIES`,
+que también alimentan los CHECK de PostgreSQL y los esquemas Zod.
 
 ---
 
 ## 2. Modelo de datos en Supabase
 
-### 2.1 Esquema real
+### 2.1 Esquema final
 
-Fuente de verdad:
-`supabase/migrations/20261109000000_align_tasks_schema.sql`.
+Fuente de verdad: conjunto ordenado de `supabase/migrations/`.
 
 ```sql
 create table public.tasks (
@@ -48,24 +51,30 @@ create table public.tasks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
-  owner_id uuid references auth.users(id) on delete set null
+  owner_id text not null references public."user"(id) on delete cascade,
+  board_id uuid references public.board(id) on delete cascade
 );
 
-create index idx_tasks_status on public.tasks (status);
-create index idx_tasks_order on public.tasks ("order");
-create index idx_tasks_due_date on public.tasks (due_date);
-create index idx_tasks_status_order on public.tasks (status, "order");
+create index idx_tasks_owner_status_order
+  on public.tasks (owner_id, status, "order");
+create index idx_tasks_owner_created_at
+  on public.tasks (owner_id, created_at desc);
+create index idx_tasks_board_id on public.tasks (board_id);
 ```
 
-La migración también crea el trigger `update_tasks_updated_at`, habilita RLS con
-políticas públicas, concede permisos a `anon`/`authenticated` y añade la tabla a la
-publicación `supabase_realtime`.
+Características adicionales:
+
+- `replica identity full` para que los DELETE incluyan `owner_id`.
+- Trigger `update_tasks_updated_at` con `search_path = ''` y `pg_catalog.now()`.
+- RLS activo; `authenticated` solo tiene `SELECT` de las filas propias.
+- `tasks` incluida en la publicación `supabase_realtime`.
+- `board` reservada para el futuro multi-tablero (máximo 2 por usuario).
 
 ### 2.2 Mapeo detallado
 
 | Task (app) | Supabase (DB) | Tipo SQL | Nullable | Default | Comentario |
 |------------|---------------|----------|----------|---------|------------|
-| `id` | `id` | UUID | NO | `gen_random_uuid()` | UUID v4 del cliente |
+| `id` | `id` | UUID | NO | `gen_random_uuid()` | UUID del cliente |
 | `title` | `title` | TEXT | NO | - | Máx. 120 caracteres |
 | `description` | `description` | TEXT | SÍ | NULL | Máx. 1000 caracteres |
 | `status` | `status` | TEXT CHECK | NO | `'todo'` | Dominio validado |
@@ -76,10 +85,22 @@ publicación `supabase_realtime`.
 | `createdAt` | `created_at` | TIMESTAMPTZ | NO | `NOW()` | Enviado por el cliente |
 | `updatedAt` | `updated_at` | TIMESTAMPTZ | NO | `NOW()` | Trigger en UPDATE |
 | `completedAt` | `completed_at` | TIMESTAMPTZ | SÍ | NULL | Opcional |
-| — | `owner_id` | UUID | SÍ | NULL | Futuro auth; no usado en MVP |
+| `ownerId` | `owner_id` | TEXT | NO | - | FK a `public."user"` |
+| — | `board_id` | UUID | SÍ | NULL | FK a `public.board` |
 
-El mapeo TypeScript está en `src/lib/task-mapper.ts`; los tipos generados desde
-Supabase, en `src/lib/types/supabase.ts`.
+El mapeo TypeScript está en `src/lib/task-mapper.ts`; los tipos de la fila, en
+`src/lib/types/supabase.ts`.
+
+### 2.3 Fechas de solo día
+
+El driver `pg` devuelve `date` como texto. Aun así, `rowToTask` normaliza cualquier
+valor:
+
+- un `Date` se convierte con `toDateOnly` (hora local);
+- un texto `YYYY-MM-DD...` se recorta a los 10 primeros caracteres;
+- cualquier otro valor se descarta.
+
+Así el tablero no pierde la fecha al recargar ni al recibir un evento de Realtime.
 
 ---
 
@@ -87,12 +108,15 @@ Supabase, en `src/lib/types/supabase.ts`.
 
 ```sql
 create or replace function public.update_updated_at_column()
-returns trigger as $$
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
 begin
-  new.updated_at = now();
+  new.updated_at = pg_catalog.now();
   return new;
 end;
-$$ language plpgsql;
+$$;
 
 create trigger update_tasks_updated_at
   before update on public.tasks
@@ -100,123 +124,92 @@ create trigger update_tasks_updated_at
   execute function public.update_updated_at_column();
 ```
 
-El cliente también envía `updatedAt` al hacer `upsert`, pero en un UPDATE el trigger
-impone la hora del servidor. La reconciliación usa el valor remoto recibido, por lo
-que el resultado es consistente entre dispositivos.
+`search_path = ''` y `pg_catalog.now()` eliminan el aviso
+`function_search_path_mutable` de los advisors de Supabase.
 
 ### 3.1 Reordenamiento
 
-No se implementó la función RPC `reorder_tasks` del diseño inicial. El MVP reordena
-en el cliente y envía un `upsert` con las tareas cuyo `order` o `status` cambió. Es
-suficiente para el tamaño del tablero y evita lógica duplicada en la base de datos.
+No hay RPC `reorder_tasks`. El cliente reordena y el diff se envía a
+`POST /api/tasks`; el servidor hace `upsert` de las tareas cuyo `order` o `status`
+cambió. Es suficiente para el tamaño del tablero y evita duplicar lógica en la base
+de datos.
 
 ---
 
 ## 4. Row Level Security (RLS)
 
-### 4.1 Políticas del MVP
+### 4.1 Estado real
 
 ```sql
 alter table public.tasks enable row level security;
+alter table public.tasks replica identity full;
 
-create policy "public select" on public.tasks for select using (true);
-create policy "public insert" on public.tasks for insert with check (true);
-create policy "public update" on public.tasks for update using (true);
-create policy "public delete" on public.tasks for delete using (true);
+revoke all on table public.tasks from anon, public;
+revoke insert, update, delete on table public.tasks from authenticated;
+grant select on table public.tasks to authenticated;
 
-grant select, insert, update, delete on table public.tasks to anon, authenticated;
+create policy "realtime select own tasks"
+  on public.tasks
+  for select
+  to authenticated
+  using (owner_id = ((select auth.jwt()) ->> 'sub'));
 ```
 
-> RLS filtra filas, pero los roles del cliente necesitan privilegios explícitos sobre
-> la tabla. Sin el `GRANT`, PostgREST devuelve `42501 permission denied`.
+- `anon` no puede leer ni escribir.
+- `authenticated` solo lee sus filas; las escrituras pasan por `/api/tasks`, que usa
+  la conexión directa a Postgres y la sesión de Better Auth.
+- `auth.jwt()` se evalúa en una subconsulta para que el planner la inicialice una
+  vez por sentencia (`auth_rls_initplan`).
 
-### 4.2 Políticas futuras (con auth)
+### 4.2 Tablas de Better Auth
 
-```sql
-create policy "tasks_user_select" on public.tasks
-  for select using (auth.uid() = owner_id);
-create policy "tasks_user_insert" on public.tasks
-  for insert with check (auth.uid() = owner_id);
-create policy "tasks_user_update" on public.tasks
-  for update using (auth.uid() = owner_id);
-create policy "tasks_user_delete" on public.tasks
-  for delete using (auth.uid() = owner_id);
-```
-
-`owner_id` ya existe para preparar esta transición sin migración destructiva.
+`public."user"`, `session`, `account`, `verification`, `pending_registration`,
+`auth_rate_limit` y `board` tienen RLS activo y ningún grant para `anon` o
+`authenticated`. Solo el servidor accede a ellas con `DATABASE_URL`.
 
 ---
 
-## 5. Persistencia local y migración
-
-### 5.1 Claves de `localStorage`
+## 5. Persistencia en el navegador
 
 | Clave | Uso |
 |-------|-----|
-| `taskboard:v2` | Estado actual de Zustand (`{ state: { tasks }, version }`) |
-| `taskboard:v1` | Respaldo histórico; se conserva tras migrar |
-| `taskboard:sync-queue` | Operaciones pendientes mientras no hay conexión |
+| `theme` (next-themes) | Única preferencia persistida: claro, oscuro o sistema. |
 
-### 5.2 Migración `taskboard:v1` → `taskboard:v2`
-
-`src/lib/storage-migration.ts`:
-
-1. Si `taskboard:v2` ya existe, no hace nada.
-2. Lee `taskboard:v1` y extrae `state.tasks` o `tasks`.
-3. Escribe `taskboard:v2` sin borrar `taskboard:v1`.
-4. Si `localStorage` falla, la app arranca vacía sin romperse.
-
-### 5.3 Formato remoto (upsert)
-
-```json
-{
-  "id": "uuid-v4",
-  "title": "Mi tarea",
-  "description": "Detalle",
-  "status": "todo",
-  "priority": "high",
-  "due_date": "2026-12-31",
-  "tags": ["trabajo", "importante"],
-  "order": 0,
-  "created_at": "2026-11-04T10:00:00.000Z",
-  "updated_at": "2026-11-04T10:00:00.000Z",
-  "completed_at": null
-}
-```
-
-### 5.4 Cola offline
-
-```typescript
-type SyncOperation =
-  | { type: "upsert"; task: Task }
-  | { type: "delete"; id: string }
-  | { type: "replace"; tasks: Task[] };
-```
-
-- `enqueueUpsert` y `enqueueDelete` sustituyen operaciones previas de la misma tarea.
-- `flushSyncQueue` procesa en orden y conserva el resto si una operación falla.
-- `replaceAllTasks` se usa al importar o cargar ejemplos.
+No existen `taskboard:v1`, `taskboard:v2` ni `taskboard:sync-queue`. El estado de
+las tareas vive en memoria y se reemplaza con la respuesta de `/api/tasks` y con
+los eventos de Realtime.
 
 ---
 
-## 6. Flujo de reconciliación
+## 6. Flujo de datos
 
 ```text
-[flushSyncQueue]
+[GET /api/tasks]
       ↓
-[fetchRemoteTasks]
+[listTasks(userId)] → SQL parametrizado
       ↓
-[reconcileTasks(local, remote)]
+[rowToTask] → Task[]
       ↓
-[merged: gana updatedAt más reciente]
+[replaceFromServer] → Zustand
       ↓
-[localOnly: se ofrece subirlas]
+[useTasksRealtime] → token + canal → eventos propios
       ↓
-[localNewer: se reenvían a Supabase]
+[upsertTaskFromRealtime] → Zustand
 ```
 
-Las tareas solo remotas se incorporan directamente. Las solo locales no se suben
-automáticamente: el usuario decide mediante el diálogo de sincronización.
+Las escrituras siguen el camino inverso:
+
+```text
+[mutación optimista en Zustand]
+      ↓
+[pushTasks / deleteTasks]
+      ↓
+[POST o DELETE /api/tasks]
+      ↓
+[Zod + owner_id de la sesión + SQL parametrizado]
+      ↓
+[PostgreSQL] → Realtime → resto de dispositivos
+```
 
 ---
 
@@ -237,12 +230,13 @@ automáticamente: el usuario decide mediante el diálogo de sincronización.
 │  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()          │
 │  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()          │
 │  completed_at   TIMESTAMPTZ NULL                            │
-│  owner_id       UUID        NULL, futuro auth               │
+│  owner_id       TEXT        NOT NULL → public."user"        │
+│  board_id       UUID        NULL → public.board             │
 ├─────────────────────────────────────────────────────────────┤
-│  RLS: políticas públicas de MVP                             │
-│  GRANT: anon, authenticated                                 │
-│  REALTIME: publicación supabase_realtime                    │
-│  ÍNDICES: status, order, due_date, (status, order)          │
+│  RLS: SELECT propio por auth.jwt() ->> 'sub'                │
+│  Escrituras: solo servidor (/api/tasks)                     │
+│  REALTIME: publicación supabase_realtime + REPLICA FULL     │
+│  ÍNDICES: (owner_id,status,order), (owner_id,created_at)    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -252,9 +246,9 @@ automáticamente: el usuario decide mediante el diálogo de sincronización.
 
 - [x] Tipos de TypeScript mapeados a PostgreSQL.
 - [x] CHECK para `status`, `priority` y `due_date`.
-- [x] Índices para consultas frecuentes.
-- [x] Trigger `updated_at` activo.
-- [x] Migración probada y reproducible.
-- [x] RLS y permisos configurados.
-- [x] Publicación Realtime activa.
-- [x] REST y Realtime probados contra el proyecto real.
+- [x] Índices alineados con las consultas reales.
+- [x] Trigger `updated_at` con `search_path` fijo.
+- [x] Migraciones ordenadas y reproducibles.
+- [x] RLS y privilegios configurados.
+- [x] Publicación Realtime activa y policy validada con `request.jwt.claims`.
+- [x] `rowToTask` cubierto por Vitest (fechas, estado inválido y etiquetas).

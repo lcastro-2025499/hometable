@@ -1,193 +1,193 @@
 # Tareas: Sincronización en tiempo real y multi-dispositivo
 
-**Código**: 300-sync-realtime | **Estado**: Implementado; QA visual pendiente | **Fecha**: 2026-11-04 | **Actualizado**: 2026-11-09
+**Código**: 300-sync-realtime | **Estado**: Implementado y verificado | **Fecha**:
+2026-11-04 | **Actualizado**: 2026-11-11
 
 ---
 
 ## Fase 1: Configuración base
 
-- [x] **T001** - Instalar dependencia `@supabase/supabase-js`
+- [x] **T001** - Instalar `@supabase/supabase-js`
   - Archivo: `package.json`
-  - Criterio: Versión 2.x instalada. ✅ 2.118.0
+  - Criterio: Versión 2.x instalada. ✅ 2.119.0
 
 - [x] **T002** - Crear cliente Supabase singleton nullable
-  - Archivo: `src/lib/supabase.ts`
-  - Criterio: Devuelve cliente o `null` si faltan variables; no rompe el arranque.
+  - Archivo: `src/lib/supabase-client.ts`
+  - Criterio: Devuelve `null` si faltan variables; no rompe el arranque y solo se
+    usa para Realtime.
 
-- [x] **T003** - Crear hook `use-supabase`
-  - Archivo: `src/hooks/use-supabase.ts`
-  - Criterio: Expone el cliente inicializado.
-
-- [x] **T004** - Crear hook `use-tasks-sync`
+- [x] **T003** - Crear hook `use-tasks-sync`
   - Archivo: `src/hooks/use-tasks-sync.ts`
-  - Criterio: Carga inicial, Realtime, online/offline, reconciliación y migración.
+  - Criterio: Carga inicial, sondeo cada 30 s, refresco al recuperar foco y al
+    volver la conexión, manejo de `401`.
+
+- [x] **T004** - Crear hook `use-tasks-realtime`
+  - Archivo: `src/hooks/use-tasks-realtime.ts`
+  - Criterio: Pide token, abre el canal, mapea eventos propios, renueva el token y
+    reintenta.
 
 ---
 
-## Fase 2: Modelo de datos
+## Fase 2: Modelo de datos y migraciones
 
-- [x] **T005** - Añadir columna `owner_id` (preparación futura)
-  - Archivo: `supabase/migrations/20261109000000_align_tasks_schema.sql`
-  - Criterio: Columna existe, nullable, con FK a `auth.users`.
+- [x] **T005** - Crear la tabla `tasks` y su esquema base
+  - Archivo: `supabase/migrations/20261109151132_align_tasks_schema_and_realtime.sql`
+  - Criterio: Columnas, CHECK, trigger, publicación Realtime.
 
-- [x] **T006** - Crear trigger `updated_at`
-  - Archivo: migración SQL
-  - Criterio: `update_tasks_updated_at` actualiza `updated_at` en cada UPDATE.
+- [x] **T006** - Crear las tablas de Better Auth y `board`
+  - Archivo: `supabase/migrations/20261109151500_better_auth_tables.sql`
+  - Criterio: `user`, `session`, `account`, `verification`, `board` y `owner_id`
+    como `text` con FK a `public."user"`.
 
-- [x] **T007** - Crear índices para rendimiento
-  - Archivo: migración SQL
-  - Criterio: `idx_tasks_status`, `idx_tasks_order`, `idx_tasks_due_date` y
-    `idx_tasks_status_order`.
+- [x] **T007** - Ordenar las migraciones según el historial remoto
+  - Archivos: `supabase/migrations/20261109152043_*`,
+    `20261109152450_*`, `20261110161929_*`, `20261110171312_*`,
+    `20261110200442_*`
+  - Criterio: Un proyecto vacío puede aplicar todos los archivos en orden.
 
-- [x] **T007b** - Alinear tipos y restricciones
-  - Archivo: migración SQL
-  - Criterio: `description` nullable, `tags` no nulo, `order` integer, CHECK de
-    `status`, `priority` y `due_date`.
+- [x] **T008** - Añadir Realtime de solo lectura por dueño
+  - Archivo: `supabase/migrations/20261111161842_realtime_owner_read.sql`
+  - Criterio: `REPLICA IDENTITY FULL`, `GRANT SELECT` a `authenticated`, policy
+    por `auth.jwt() ->> 'sub'` y alta en la publicación.
+
+- [x] **T009** - Añadir rate limit persistente
+  - Archivo: `supabase/migrations/20261111162025_auth_rate_limit.sql`
+  - Criterio: Tabla `auth_rate_limit` con RLS y sin grants públicos.
+
+- [x] **T010** - Indexar por dueño
+  - Archivo: `supabase/migrations/20261111162255_tasks_owner_indexes.sql`
+  - Criterio: `(owner_id, status, "order")` y `(owner_id, created_at desc)`.
+
+- [x] **T011** - Endurecer policy y trigger
+  - Archivos: `20261111174752_harden_policy_and_function.sql` y
+    `20261111174801_harden_realtime_policy_jwt_subquery.sql`
+  - Criterio: `auth.jwt()` en subconsulta, `search_path = ''` y
+    `pg_catalog.now()`.
+
+- [x] **T012** - Hacer `owner_id` obligatorio
+  - Archivo: `supabase/migrations/20261112040000_tasks_owner_not_null_and_board_index.sql`
+  - Criterio: `owner_id NOT NULL` e índice `idx_board_owner_id`; sin filas
+    huérfanas antes de aplicar.
 
 ---
 
-## Fase 3: Store (Zustand)
+## Fase 3: API y store
 
-- [x] **T008** - Extender `TaskStore`
+- [x] **T013** - CRUD autenticado en `/api/tasks`
+  - Archivo: `src/app/api/tasks/route.ts`
+  - Criterio: `GET`, `POST` y `DELETE`; `401` sin sesión, `403` sin verificar y
+    `403` desde otro origen.
+
+- [x] **T014** - Repositorio SQL parametrizado
+  - Archivo: `src/lib/tasks-repo.ts`
+  - Criterio: Zod por tarea, `owner_id` de la sesión, máximo 500 tareas y
+    `{ accepted, rejected }`.
+
+- [x] **T015** - Cliente de API
+  - Archivo: `src/lib/tasks-sync.ts`
+  - Criterio: `fetchRemoteTasks`, `pushTasks`, `deleteTasks`, manejadores de fallo
+    y de `401`.
+
+- [x] **T016** - Store en memoria
   - Archivo: `src/store/task-store.ts`
-  - Criterio: Métodos `syncFromSupabase`, `addTaskRemote`, `updateTaskRemote` y
-    `deleteTaskRemote`.
+  - Criterio: Sin `persist`, con `replaceFromServer` y mutaciones optimistas.
 
-- [x] **T009** - Implementar `syncFromSupabase`
-  - Criterio: Reemplaza el estado con las tareas reconciliadas.
-
-- [x] **T010** - Implementar `addTaskRemote`
-  - Criterio: Añade sin generar UUID nuevo y sin duplicar.
-
-- [x] **T011** - Implementar `updateTaskRemote`
-  - Criterio: Actualiza la tarea completa por `id`.
-
-- [x] **T012** - Implementar `deleteTaskRemote`
-  - Criterio: Elimina por `id`.
-
-- [x] **T013** - Suscripción Realtime
-  - Archivo: `src/hooks/use-tasks-sync.ts` (en lugar del store)
-  - Criterio: Canal `public:tasks` con INSERT, UPDATE y DELETE; `removeChannel` al
-    desmontar.
-
----
-
-## Fase 4: Sincronizar operaciones existentes
-
-- [x] **T014** - `addTask` → Supabase
-- [x] **T015** - `updateTask` → Supabase
-- [x] **T016** - `deleteTask` → Supabase
-- [x] **T017** - `moveTask` → Supabase (status y order)
-- [x] **T017b** - Sincronizar duplicar, restaurar, limpiar completadas, importar y
-  cargar ejemplos mediante diff de tareas.
-
----
-
-## Fase 5: Componentes de UI
-
-- [x] **T018** - Crear `ConnectionStatus`
-  - Archivo: `src/components/ui/connection-status.tsx`
-  - Criterio: Badge con estados, `aria-live`, iconos y hora de última sincronización.
-
-- [x] **T019** - Integrar el badge en el tablero
+- [x] **T017** - Integrar el store con la API
   - Archivo: `src/components/board/task-board.tsx`
-  - Criterio: Visible en el header del tablero, responsive.
+  - Criterio: Carga inicial, esqueleto, mutaciones y recarga ante fallos.
 
-- [x] **T020** - Diálogo de sincronización de tareas locales
+---
+
+## Fase 4: Realtime
+
+- [x] **T018** - Emitir el token de Realtime
+  - Archivo: `src/app/api/realtime/token/route.ts` y `src/lib/realtime-token.ts`
+  - Criterio: JWT HS256 de 15 min con `sub`, `role=authenticated` y
+    `aud=authenticated`; `401`/`403`/`503` según corresponda.
+
+- [x] **T019** - Autenticar el canal
+  - Archivo: `src/hooks/use-tasks-realtime.ts`
+  - Criterio: `setAuth`, filtro por dueño, `subscribe`, renovación antes de expirar
+    y reintento con retardo.
+
+- [x] **T020** - Mapear eventos
+  - Archivo: `src/lib/task-mapper.ts`
+  - Criterio: `rowToTask` normaliza fechas y descarta estados/prioridades
+    inválidos.
+
+- [x] **T021** - Resincronizar al suscribirse
+  - Archivo: `src/hooks/use-tasks-realtime.ts`
+  - Criterio: Una carga por API tras `SUBSCRIBED` para cubrir la carrera inicial.
+
+---
+
+## Fase 5: UI y errores
+
+- [x] **T022** - Badge de sincronización
   - Archivo: `src/components/ui/connection-status.tsx`
-  - Criterio: Lista tareas solo locales, permite subirlas o posponerlas y reabrir.
+  - Criterio: Estados, `aria-live`, iconos y hora de última sincronización.
 
----
-
-## Fase 6: Migración de datos
-
-- [x] **T021** - Migración local `taskboard:v1` → `taskboard:v2`
-  - Archivo: `src/lib/storage-migration.ts`
-  - Criterio: Copia sin borrar `v1`; tolera errores de `localStorage`.
-
-- [x] **T022** - Detección de tareas solo locales
+- [x] **T023** - Notificación de fallos
   - Archivo: `src/hooks/use-tasks-sync.ts`
-  - Criterio: La reconciliación devuelve `localOnly` y dispara el diálogo.
+  - Criterio: `toast` y recarga del estado autoritativo.
 
-- [x] **T022b** - Subida manual de tareas locales
-  - Archivo: `src/lib/supabase-sync.ts`
-  - Criterio: `pushTasks` hace `upsert` por `id` y actualiza el estado del badge.
+- [x] **T024** - Manejo de sesión caducada
+  - Archivos: `src/lib/tasks-sync.ts` y `src/hooks/use-tasks-sync.ts`
+  - Criterio: `signOut` y redirección a `/login`.
 
----
-
-## Fase 7: Errores y fallback
-
-- [x] **T023** - Detección online/offline
-  - Archivo: `src/hooks/use-tasks-sync.ts`
-  - Criterio: Eventos `online`/`offline`, reintento y estado visual.
-
-- [x] **T024** - Fallback a localStorage
-  - Archivo: `src/lib/supabase.ts`, `src/store/task-store.ts`
-  - Criterio: Sin Supabase la app funciona en modo local.
-
-- [x] **T025** - Cola de cambios pendientes
-  - Archivo: `src/lib/sync-queue.ts`, `src/lib/supabase-sync.ts`
-  - Criterio: Operaciones en `taskboard:sync-queue`, vaciado ordenado y reintento.
-
-- [x] **T025b** - Reconciliación por `updatedAt`
-  - Archivo: `src/lib/task-sync.ts`
-  - Criterio: Gana la tarea más reciente; no se pierden tareas solo remotas o solo
-    locales.
+- [x] **T025** - Eliminar la persistencia local de tareas
+  - Archivos: `src/store/task-store.ts`, `src/components/board/task-board.tsx`
+  - Criterio: Sin `persist`, sin listener de `storage`, sin datos de ejemplo y sin
+    importación/exportación.
 
 ---
 
-## Fase 8: Variables de entorno y documentación
+## Fase 6: Pruebas y documentación
 
-- [x] **T026** - Crear `.env.example`
-  - Archivo: `.env.example`
-  - Criterio: Variables públicas documentadas sin valores reales.
+- [x] **T026** - Pruebas unitarias
+  - Archivos: `tests/task-utils.test.ts`, `tests/validation.test.ts`,
+    `tests/auth-validation.test.ts`, `tests/task-mapper.test.ts`,
+    `tests/http.test.ts`, `tests/realtime-token.test.ts`
+  - Criterio: 46 pruebas en verde con `pnpm test`.
 
-- [x] **T027** - Actualizar documentación
-  - Archivos: `README.md`, `GUIA.md`, `AGENTS.md`, `PROGRESS.md`
-  - Criterio: Configuración local/Vercel, migración, seguridad y estado real.
+- [x] **T027** - Integración continua
+  - Archivo: `.github/workflows/ci.yml`
+  - Criterio: install, lint, typegen, tsc, test y build en cada push/PR.
 
-- [x] **T027b** - Actualizar artefactos SDD
-  - Archivos: `specs/300-sync-realtime/*`
-  - Criterio: Spec, plan, research, data-model, quickstart, tasks y QA coherentes.
-
-- [x] **T027c** - Aplicar constitución v2.1.0
-  - Archivo: `.specify/memory/constitution.md`
-  - Criterio: Persistencia híbrida y Supabase permitidos.
+- [x] **T028** - Documentación
+  - Archivos: `README.md`, `.env.example`, `PROGRESS.md`,
+    `.specify/memory/constitution.md`, `specs/300-sync-realtime/*`
+  - Criterio: Reflejan la arquitectura server-first, Realtime autenticado y la
+    política de migraciones.
 
 ---
 
-## Fase 9: QA y verificación
+## Fase 7: QA
 
-- [x] **T028** - QA API REST: crear/editar/borrar
+- [x] **T029** - QA de esquema y permisos
   - Archivo: `QA.md`
-  - Criterio: INSERT `201`, UPDATE `200`, SELECT `200`, DELETE `200`.
+  - Criterio: `owner_id NOT NULL`, índices, policy activa y publicación.
 
-- [x] **T028b** - QA Realtime
+- [x] **T030** - QA de API
   - Archivo: `QA.md`
-  - Criterio: INSERT, UPDATE y DELETE recibidos por WebSocket.
+  - Criterio: `401` sin sesión, `403` sin verificar y `403` desde otro origen;
+    CRUD correcto con sesión.
 
-- [x] **T028c** - Permisos de tabla
-  - Archivo: migración SQL
-  - Criterio: `GRANT` a `anon`/`authenticated`; sin `42501`.
-
-- [ ] **T029** - QA visual: Drag & Drop
+- [x] **T031** - QA de Realtime
   - Archivo: `QA.md`
-  - Criterio: Movimientos se sincronizan sin lag entre pestañas.
+  - Criterio: INSERT, UPDATE y DELETE recibidos; solo filas propias.
 
-- [ ] **T030** - QA visual: Offline/Online
+- [x] **T032** - QA visual con dos dispositivos
   - Archivo: `QA.md`
-  - Criterio: La app funciona offline y vacía la cola al reconectar.
+  - Criterio: Cambios propagados en ambos sentidos el 11/11/2026.
 
-- [ ] **T031** - QA visual: Múltiples dispositivos
+- [x] **T033** - QA de respaldo
   - Archivo: `QA.md`
-  - Criterio: Sincronización real entre dos dispositivos.
+  - Criterio: Con Realtime deshabilitado, el sondeo mantiene el tablero al día.
 
-- [x] **T032** - Verificar build de producción
-  - Comando: `pnpm build`
-  - Criterio: Build sin errores.
-
-- [x] **T033** - Verificar despliegue en Vercel
-  - Criterio: Deployment `READY`, URL `200` y variables de Supabase aplicadas. ✅
+- [x] **T034** - Puertas y despliegue
+  - Criterio: lint, typegen, tsc, test y build en verde; deployment `READY` en
+    Vercel.
 
 ---
 
@@ -197,19 +197,11 @@
 pnpm lint
 pnpm exec next typegen
 pnpm exec tsc --noEmit
+pnpm test
 pnpm build
 ```
 
-Y el QA manual de `QA.md` (los casos visuales siguen pendientes).
-
----
-
-## Enmienda constitucional
-
-- [x] Constitución actualizada a v2.1.0:
-  - persistencia híbrida local + Supabase;
-  - Supabase Realtime en lugar de WebSocket autohospedado;
-  - modo local como fallback.
+Y el QA manual de `QA.md`.
 
 ---
 
@@ -217,17 +209,19 @@ Y el QA manual de `QA.md` (los casos visuales siguen pendientes).
 
 | Tarea | Depende de | Bloquea |
 |-------|------------|---------|
-| T009-T013 | T002, T004 | T014-T017 |
-| T014-T017 | T008-T013, T018 | T020 |
-| T018-T020 | T001-T004 | T023-T025 |
-| T021-T022 | T001-T004 | T026-T027 |
-| T023-T025 | T014-T017, T020 | T028-T031 |
+| T005-T012 | Proyecto Supabase | T013-T021 |
+| T013-T017 | T005-T012 | T022-T025 |
+| T018-T021 | T008, T011, T013 | T022-T025 |
+| T026-T027 | T013-T021 | T034 |
+| T029-T033 | T013-T021 | T034 |
 
 ---
 
 ## Notas
 
-- **Clave local**: `taskboard:v2`, con migración desde `taskboard:v1`.
-- **WebSocket**: Supabase Realtime; sin autohospedaje.
-- **Límite gratuito**: 500k mensajes/mes, suficiente para el MVP.
-- **Pendiente real**: QA visual humano y verificación del deployment.
+- **Fuente de verdad**: PostgreSQL. Sin cola offline ni reconciliación.
+- **WebSocket**: Supabase Realtime, autenticado con JWT corto y limitado por RLS.
+- **Respaldo**: sondeo cada 30 s, foco y reconexión.
+- **Migraciones**: mismas versiones que el historial remoto; no se crean desde el
+  panel.
+- **Pendiente fuera de alcance**: tableros compartidos, invitaciones y chat.

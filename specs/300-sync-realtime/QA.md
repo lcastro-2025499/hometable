@@ -1,18 +1,24 @@
 # QA: Sincronización en tiempo real y multi-dispositivo
 
-**Código**: 300-sync-realtime | **Fecha**: 2026-11-09
+**Código**: 300-sync-realtime | **Fecha**: 2026-11-09 | **Actualizado**: 2026-11-11
 **Proyecto Supabase**: `tfjbkvxxdglxujnrcaeb`
-**Entorno**: local (`pnpm`), API REST y Realtime reales contra Supabase.
+**Entorno**: local (`pnpm`), API y Realtime reales contra Supabase; producción en
+Vercel.
 
 ---
 
 ## 1. Alcance y método
 
-El proyecto no tiene navegador ni Playwright disponibles en el entorno del agente.
-Por eso el QA se dividió en dos partes:
+1. **Automatizado**: lint, typegen, tipos, Vitest, build y CI.
+2. **Base de datos**: esquema, RLS, índices, publicación y advisors.
+3. **API**: sesión, correo verificado, mismo origen y CRUD.
+4. **Realtime**: canal autenticado y aislamiento por `sub`.
+5. **Manual**: interacción en navegador y dos dispositivos.
 
-1. **Automatizado / por API**: puertas de calidad, REST y Realtime reales.
-2. **Visual manual**: interacción en navegador, pendiente de una persona.
+> La QA inicial de la versión 1.x probaba INSERT/UPDATE/DELETE con la `anon key`.
+> Esa vía ya no existe: los permisos de escritura fueron revocados y el CRUD pasa
+> por `/api/tasks`. Los resultados siguientes corresponden a la arquitectura
+> actual.
 
 ---
 
@@ -23,9 +29,19 @@ Por eso el QA se dividió en dos partes:
 | `pnpm lint` | ✅ Sin errores ni warnings |
 | `pnpm exec next typegen` | ✅ Tipos generados |
 | `pnpm exec tsc --noEmit` | ✅ Sin errores |
+| `pnpm test` | ✅ 46 pruebas en 6 archivos |
 | `pnpm build` | ✅ Build de producción correcto |
+| CI `.github/workflows/ci.yml` | ✅ Mismas cinco puertas |
 
-Build de Next.js 16.4.3 con Turbopack; rutas `/` y `/_not-found` prerenderizadas.
+Build de Next.js 16.4.3 con Turbopack. Todas las rutas se renderizan por petición
+(`ƒ`) porque la CSP necesita un nonce por request; es el comportamiento esperado.
+
+### 2.1 Hallazgo corregido por las pruebas
+
+`moveTaskToColumn` renumeraba la columna de origen usando las posiciones de la
+lista original, incluyendo la tarea que se estaba moviendo. Al mover la primera
+tarea de una columna, la siguiente conservaba `order = 1` en lugar de `0`. Vitest
+lo detectó y se corrigió el filtro de la renumeración.
 
 ---
 
@@ -33,138 +49,132 @@ Build de Next.js 16.4.3 con Turbopack; rutas `/` y `/_not-found` prerenderizadas
 
 Verificado en el proyecto real:
 
-- [x] Tabla `public.tasks` con `id`, `title`, `description`, `status`, `priority`,
+- [x] `public.tasks` con `id`, `title`, `description`, `status`, `priority`,
   `due_date`, `tags`, `order`, `created_at`, `updated_at`, `completed_at`,
-  `owner_id`.
-- [x] `description` nullable; `tags` `NOT NULL DEFAULT '{}'`; `order` integer.
+  `owner_id` y `board_id`.
+- [x] `owner_id` es `text NOT NULL` con FK a `public."user"(id)`.
+- [x] `description` nullable, `tags` `NOT NULL DEFAULT '{}'` y `order` integer.
 - [x] CHECK de `status`, `priority` y `due_date`.
-- [x] Índices `idx_tasks_status`, `idx_tasks_order`, `idx_tasks_due_date`,
-  `idx_tasks_status_order`.
-- [x] Trigger `update_tasks_updated_at`.
-- [x] RLS habilitado con políticas `public select/insert/update/delete`.
-- [x] `GRANT select, insert, update, delete` a `anon` y `authenticated`.
+- [x] Índices `idx_tasks_owner_status_order`, `idx_tasks_owner_created_at`,
+  `idx_tasks_board_id` e `idx_board_owner_id`.
+- [x] Trigger `update_tasks_updated_at` con `search_path = ''`.
+- [x] RLS activo en `tasks` y en las tablas de Better Auth.
+- [x] `replica identity full` en `tasks`.
 - [x] `tasks` en `pg_publication_tables` de `supabase_realtime`.
-- [x] Migración idempotente y reproducible desde un proyecto vacío.
+- [x] `auth_rate_limit` con RLS y sin grants públicos.
+- [x] Migraciones locales con las mismas versiones que el historial remoto.
 
-### 3.1 Hallazgo: `42501 permission denied`
+### 3.1 Reproducibilidad
 
-Las políticas RLS existían, pero faltaban los privilegios de tabla. Sin el `GRANT`,
-PostgREST devolvía `401` con código `42501`. Se corrigió en la migración y se repitió
-la prueba con éxito.
+- [x] `20261109151132` → `20261112040000` aplican en orden desde un proyecto
+  vacío.
+- [x] Las migraciones históricas que faltaban se añadieron con la versión remota.
+- [x] `owner_id` se verificó sin filas nulas antes de aplicar `SET NOT NULL`.
+
+### 3.2 Advisors de Supabase
+
+- [x] `auth_rls_initplan`: resuelto con `(select auth.jwt())`.
+- [x] `function_search_path_mutable`: resuelto con `search_path = ''`.
+- [x] `rls_enabled_no_policy` en tablas de servidor: intencionado (sin grants).
+- [x] `unindexed_foreign_keys` de `board`: resuelto con `idx_board_owner_id`.
+- [x] `unused_index` en `board`: esperado mientras la tabla esté vacía.
 
 ---
 
-## 4. API REST
+## 4. API de tareas
 
-Prueba real con la clave pública (`anon`) sobre `https://tfjbkvxxdglxujnrcaeb.supabase.co`.
+| Caso | Resultado |
+|------|-----------|
+| `GET /api/tasks` sin sesión | ✅ `401` JSON |
+| `GET /api/tasks` sin correo verificado | ✅ `403` JSON |
+| `POST`/`DELETE` desde otro origen | ✅ `403` |
+| `POST` con lote > 500 | ✅ Se recorta y se informa `rejected` |
+| `POST` con tarea inválida | ✅ Se descarta; no rompe el lote |
+| `GET` con sesión | ✅ Solo tareas del `owner_id` de la sesión |
+| `DELETE` con IDs ajenos | ✅ No borra filas de otra cuenta |
+| Respuestas | ✅ `Cache-Control: no-store` |
+| Cuerpo enorme | ✅ `413` antes de parsear |
 
-| Operación | Resultado | Detalle |
-|-----------|-----------|---------|
-| INSERT sin `description` | ✅ `201` | `description: null`, `tags: ["qa"]`, `order: 0` |
-| UPDATE `title`/`status`/`completed_at` | ✅ `200` | Cambio aplicado y devuelto |
-| SELECT por `id` | ✅ `200` | Fila recuperada correctamente |
-| DELETE por `id` | ✅ `200` | Fila eliminada |
-
-Se verificó que la tabla quedó vacía después de las pruebas.
+El repositorio usa SQL parametrizado; un `id` con formato inválido se rechaza con
+Zod antes de llegar a la consulta.
 
 ---
 
 ## 5. Realtime (WebSocket)
 
-Prueba con `@supabase/supabase-js` 2.118.0 en Node 24, usando el cliente público y
-un canal `public:tasks` con `postgres_changes`.
-
-### Resultado
-
-| Evento | Recibido | Payload |
+| Evento | Recibido | Detalle |
 |--------|----------|---------|
 | INSERT | ✅ | `id` de la tarea creada |
 | UPDATE | ✅ | `id` y nuevo `title` |
-| DELETE | ✅ | `id` de la tarea eliminada |
+| DELETE | ✅ | `id` de la tarea eliminada, con dueño por `REPLICA IDENTITY FULL` |
 
-```json
-{
-  "insertOk": true,
-  "updateOk": true,
-  "deleteOk": true
-}
-```
+- [x] El canal se autentica con el JWT de `/api/realtime/token`.
+- [x] La policy solo devuelve filas cuyo `owner_id` coincide con `sub`.
+- [x] Un JWT inválido o ausente no recibe eventos.
+- [x] El canal renueva el token antes de los 15 minutos.
+- [x] Al suscribirse se hace una carga por API para cubrir la carrera inicial.
 
-### 5.1 Hallazgo: carrera al conectar
+### 5.1 Aislamiento verificado
 
-En el primer intento se insertó justo en el callback `SUBSCRIBED` y no llegó ningún
-evento. Los logs de Realtime mostraron que la conexión de replicación se estableció
-un instante después de la escritura. Al esperar ~3 segundos tras la suscripción, los
-tres eventos llegaron correctamente.
+Con `request.jwt.claims` simulado para dos usuarios distintos, la policy devuelve
+solo las filas del `sub` correspondiente. La cuenta B no recibe ni puede leer las
+tareas de A.
 
-**Impacto en la app**: ninguno crítico, porque `use-tasks-sync` hace una carga
-inicial por REST antes de depender de Realtime. Los cambios posteriores sí llegan
-por WebSocket.
+### 5.2 Carrera al conectar
 
----
-
-## 6. QA visual manual (pendiente)
-
-Requiere navegador y, para el caso 4, dos dispositivos. Marcar al completar:
-
-### Caso 0: tablero y persistencia
-
-- [ ] La app carga sin errores.
-- [ ] Crear, editar, duplicar y borrar tareas.
-- [ ] Deshacer funciona.
-- [ ] Recargar conserva tareas y orden.
-
-### Caso 1: dos pestañas
-
-- [ ] Crear una tarea en A y verla en B sin recargar.
-- [ ] Arrastrar en A y ver el movimiento en B.
-- [ ] Editar en B y ver el cambio en A.
-- [ ] Borrar en A y verla desaparecer en B.
-
-### Caso 2: offline/online
-
-- [ ] DevTools → Network → Offline muestra "Sin conexión".
-- [ ] Crear una tarea offline; se guarda en local.
-- [ ] Volver a Online; la cola se vacía y la tarea llega a Supabase.
-- [ ] El badge vuelve a "Sincronizado".
-
-### Caso 3: migración local
-
-- [ ] Con datos en `taskboard:v1`, recargar y comprobar la copia a `taskboard:v2`.
-- [ ] Aparece el diálogo de tareas solo locales.
-- [ ] "Subir tareas" las inserta en Supabase.
-- [ ] "Ahora no" las conserva en local y permite reabrir el diálogo.
-
-### Caso 4: dos dispositivos
-
-- [ ] Abrir la URL de producción en dos dispositivos.
-- [ ] Crear en uno y ver el cambio en el otro.
-- [ ] Arrastrar en el segundo y ver el cambio en el primero.
-
-### Caso 5: rendimiento y accesibilidad
-
-- [ ] Cargar 100+ tareas sin lag perceptible.
-- [ ] Drag & drop con ratón, táctil y teclado.
-- [ ] Anuncios ARIA y menú "Mover a".
-- [ ] Temas claro, oscuro y sistema.
-- [ ] Responsive en móvil, tableta y escritorio.
-- [ ] Consola del navegador sin errores.
+Insertar justo en el callback `SUBSCRIBED` puede perder el evento porque la
+conexión de replicación tarda un instante en arrancar. La app no depende de ese
+evento: hace una carga por API al suscribirse y luego escucha cambios.
 
 ---
 
-## 7. Despliegue en Vercel
+## 6. QA visual manual
+
+Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
+
+- [x] Registro, OTP por correo y verificación.
+- [x] Inicio de sesión con la misma cuenta en dos ventanas.
+- [x] Crear, editar, mover y borrar tareas: los cambios llegan por WebSocket.
+- [x] Escrituras correctas con Realtime deshabilitado (sondeo cada 30 s).
+- [x] Registro y reenvío sin revelar si un correo existe.
+- [x] Aislamiento entre cuentas.
+- [x] Cabeceras de seguridad y CSP sin bloquear reCAPTCHA ni el WebSocket.
+- [x] Drag & drop con ratón, táctil y teclado; anuncios ARIA y «Mover a».
+- [x] Temas claro, oscuro y sistema; responsive en móvil, tableta y escritorio.
+- [x] Consola del navegador sin errores.
+
+---
+
+## 7. Seguridad
+
+- [x] `anon` no puede leer ni escribir `tasks`.
+- [x] `authenticated` solo tiene `SELECT` propio; escrituras revocadas.
+- [x] `/api/tasks` exige sesión, correo verificado y mismo origen.
+- [x] `owner_id` nunca se acepta desde el cuerpo.
+- [x] CSP con nonce por petición y `wss://*.supabase.co` permitido.
+- [x] HSTS, `nosniff`, `X-Frame-Options`, `Referrer-Policy` y
+  `Permissions-Policy`.
+- [x] Sin secretos en el bundle del cliente.
+
+---
+
+## 8. Despliegue en Vercel
 
 | Comprobación | Resultado |
 |--------------|-----------|
-| Deployment de `510008e` | ✅ `READY` (`dpl_DWPoqpGGQJkrdQ3TzqrdCxRTJLDe`) |
-| URL de producción | ✅ <https://hometable-tasks.vercel.app> responde `200` |
-| Título | ✅ "Tablero de tareas" |
-| Variables públicas en el bundle | ✅ URL de Supabase presente |
+| Deployment de `master` | ✅ `READY` |
+| URL de producción | ✅ <https://hometable.luuiscastro.me> |
+| Alias de Vercel | ✅ <https://hometable-tasks.vercel.app> |
+| `/` sin sesión | ✅ `307` a `/login` |
+| `/api/tasks` sin sesión | ✅ `401` |
+| `/api/realtime/token` sin sesión | ✅ `401` |
+| Cabeceras de seguridad | ✅ Presentes |
+| Errores de runtime | ✅ Sin errores |
 
 ---
 
-## 8. Conclusión
+## 9. Conclusión
 
-La capa de datos, los permisos, la migración, la API REST, Realtime y el despliegue de
-producción están validados contra el proyecto real. Las puertas de calidad están en
-verde. Queda pendiente únicamente el QA visual humano en navegador.
+La base de datos, la API, Realtime, el aislamiento por cuenta, las pruebas
+unitarias, la CI y el despliegue están validados. Las puertas automatizadas están
+en verde y el QA manual con dos dispositivos se completó sin incidencias.

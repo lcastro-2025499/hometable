@@ -1,31 +1,38 @@
 # Especificación: Sincronización en tiempo real y multi-dispositivo
 
-**Código**: 300-sync-realtime | **Autor**: Equipo de desarrollo | **Fecha**: 2026-11-04 | **Estado**: Implementado (2026-11-09)
+**Código**: 300-sync-realtime | **Autor**: Equipo de desarrollo | **Fecha**: 2026-11-04
+| **Actualizado**: 2026-11-11 | **Estado**: Implementado y en producción
 
 ---
 
 ## 1. Resumen
 
-Hometable pasa de una SPA con persistencia exclusivamente local a una aplicación
-con **persistencia híbrida**: `localStorage` sigue siendo la fuente de respaldo y
-Supabase añade sincronización multi-dispositivo en tiempo real. Los cambios en las
-tareas (crear, mover, editar, borrar) se guardan de forma optimista en local y se
-replican a Supabase; los demás clientes reciben el cambio por WebSocket.
+Hometable mantiene el tablero sincronizado entre los dispositivos de **una misma
+cuenta**. PostgreSQL es la única fuente de verdad: el navegador lee y escribe a
+través de `/api/tasks`, que valida la sesión de Better Auth y deriva el dueño. Los
+demás dispositivos reciben los cambios por **Supabase Realtime** mediante un JWT
+corto y RLS; si el WebSocket no está disponible, un sondeo cada 30 segundos
+mantiene el tablero al día.
 
-La sincronización es **opcional**: si faltan las variables de entorno o no hay
-conexión, la app funciona igual que antes en modo local.
+> **Historia**: la versión 1.x de esta especificación describía una SPA con
+> `localStorage`, cola offline y reconciliación local/remoto. Esa arquitectura fue
+> sustituida en la versión 2.0 por el servidor como fuente única de verdad. Los
+> documentos de este directorio describen el estado real desde entonces.
 
 ---
 
 ## 2. Contexto actual
 
-- **Arquitectura**: SPA sin backend propio, desplegada en Vercel.
-- **Persistencia local**: clave `taskboard:v2`; los datos de `taskboard:v1` se
-  migran automáticamente conservando el respaldo original.
-- **Sincronización entre pestañas**: evento `storage` del navegador.
-- **Stack**: Next.js 16, React 19, TypeScript 5, Zustand 5, Tailwind CSS 4.
-- **Servicio externo opcional**: Supabase (capa gratuita) para Postgres, API REST
-  y Realtime.
+- **Arquitectura**: aplicación full-stack con Next.js 16 App Router desplegada en
+  Vercel.
+- **Persistencia**: PostgreSQL en Supabase, accedido desde el servidor con `pg` y
+  sentencias parametrizadas. No hay tareas en `localStorage`.
+- **Autenticación**: obligatoria con Better Auth, correo verificado y registro
+  diferido hasta confirmar el OTP.
+- **Sincronización**: Realtime autenticado para lectura de las tareas propias y
+  sondeo de respaldo.
+- **Stack**: Next.js 16, React 19, TypeScript 5, Zustand 5 (sin `persist`),
+  Tailwind CSS 4, Vitest 3.
 
 ---
 
@@ -33,12 +40,16 @@ conexión, la app funciona igual que antes en modo local.
 
 Definir la integración de Supabase para:
 
-1. **Base de datos**: mapear `Task` a la tabla PostgreSQL `tasks`.
-2. **Cliente**: configurar `@supabase/supabase-js` con un cliente nullable.
-3. **Sincronización**: enviar cada mutación y escuchar cambios por Realtime.
-4. **Transición suave**: fallback a `localStorage` y cola de operaciones offline.
-5. **Datos locales preservados**: migrar `taskboard:v1` → `taskboard:v2` y ofrecer
-   subir al remoto las tareas que solo existen en local.
+1. **Base de datos**: persistir `Task` en la tabla PostgreSQL `tasks`, con
+   `owner_id` obligatorio.
+2. **API**: exponer `GET`, `POST` y `DELETE /api/tasks` con sesión, mismo origen y
+   SQL parametrizado.
+3. **Realtime**: entregar INSERT/UPDATE/DELETE de las tareas propias por WebSocket,
+   sin conceder escrituras ni acceso a otras cuentas.
+4. **Respaldo**: mantener el tablero al día con sondeo cuando Realtime no está
+   disponible.
+5. **Reproducibilidad**: versionar el esquema, RLS, índices y publicación en
+   `supabase/migrations/` en el mismo orden que el historial remoto.
 
 ---
 
@@ -46,32 +57,38 @@ Definir la integración de Supabase para:
 
 ### 4.1 Base de datos
 
-**Elección definitiva**: **Supabase** (versión gratuita).
+**Elección definitiva**: **Supabase** (PostgreSQL + Realtime).
 
 | Opción | Pros | Contras | Decisión |
 |--------|------|---------|----------|
-| PostgreSQL nativo en Vercel | Integración nativa | No soporta WebSocket persistente | ❌ Rechazada |
-| Firebase | Muy sencillo | Límite de lecturas/escrituras bajo | ❌ Rechazada |
-| Supabase | Gratuito, WebSocket, SQL completo | Requiere migración | ✅ Elegida |
+| PostgreSQL nativo en Vercel | Integración nativa | No ofrece WebSocket persistente | ❌ Rechazada |
+| Firebase | Sencillo | Modelo NoSQL y límites bajos | ❌ Rechazada |
+| Supabase | PostgreSQL, RLS y Realtime | Requiere configurar RLS y JWT | ✅ Elegida |
 
 ### 4.2 Variables de entorno
 
-Solo se usan variables públicas, aptas para el navegador:
+Públicas (llegan al navegador):
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://[project].supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=[anon-public-key]
 ```
 
-No se usa `SUPABASE_SERVICE_ROLE_KEY` en la aplicación: cualquier clave secreta
-debe permanecer fuera del cliente y de Vercel si no se necesita.
+Solo servidor:
 
-### 4.3 Transición de datos
+```bash
+DATABASE_URL=postgresql://...pooler.supabase.com:6543/postgres
+SUPABASE_JWT_SECRET=[jwt-secret-del-proyecto]
+```
 
-- Los usuarios existentes con `taskboard:v1` conservan sus datos: la app copia las
-  tareas a `taskboard:v2` sin borrar la clave anterior.
-- Al conectar con Supabase se ofrece subir las tareas que solo existen en local.
-- Si se rechaza, la app sigue funcionando en local y el aviso queda disponible.
+No se usa `SUPABASE_SERVICE_ROLE_KEY` en la aplicación. La `anon key` es pública
+por diseño; el acceso real lo limitan la sesión, la API y RLS.
+
+### 4.3 Transición desde la versión local
+
+No hay migración automática de `taskboard:*`. Una persona que venía de la versión
+local debe crear una cuenta y volver a introducir sus tareas. Esta decisión se
+documentó en la enmienda constitucional v3.0.0.
 
 ---
 
@@ -79,8 +96,7 @@ debe permanecer fuera del cliente y de Vercel si no se necesita.
 
 ### 5.1 Tabla `tasks`
 
-La fuente de verdad versionada es
-`supabase/migrations/20261109000000_align_tasks_schema.sql`.
+Fuente de verdad: conjunto ordenado de `supabase/migrations/`. El estado final:
 
 ```sql
 create table public.tasks (
@@ -97,38 +113,40 @@ create table public.tasks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
-  owner_id uuid references auth.users(id) on delete set null
+  owner_id text not null references public."user"(id) on delete cascade,
+  board_id uuid references public.board(id) on delete cascade
 );
 ```
 
-Además, la migración:
+Características adicionales:
 
-- actualiza `updated_at` con un trigger `BEFORE UPDATE`;
-- crea los índices `idx_tasks_status`, `idx_tasks_order`, `idx_tasks_due_date` y
-  `idx_tasks_status_order`;
-- habilita RLS con políticas públicas de MVP;
-- concede `select, insert, update, delete` a `anon` y `authenticated`;
-- añade `tasks` a la publicación `supabase_realtime`.
-
-`owner_id` queda preparado para autenticación futura, pero no se usa en el MVP.
+- `owner_id` es `text` porque referencia `public."user"(id)` de Better Auth, no
+  `auth.users`.
+- `replica identity full` para que los eventos DELETE incluyan el dueño.
+- Índices `(owner_id, status, "order")` y `(owner_id, created_at desc)`, más
+  `idx_tasks_board_id` para el futuro multi-tablero.
+- Trigger `update_tasks_updated_at` con `search_path = ''` y `pg_catalog.now()`.
+- RLS activo. `authenticated` solo tiene `SELECT` de las filas propias; `anon` no
+  tiene ningún privilegio.
 
 ### 5.2 Mapeo de campos (Task ↔ Supabase)
 
 | Task (app) | Supabase (DB) | Comentario |
 |------------|---------------|------------|
-| `id: string` | `id: uuid` | UUID v4 generado en el cliente |
+| `id: string` | `id: uuid` | UUID generado en el cliente |
 | `title: string` | `title: text` | Máx. 120 caracteres |
 | `description?: string` | `description: text` | Nullable |
 | `status: TaskStatus` | `status: text` | CHECK de dominio |
 | `priority: TaskPriority` | `priority: text` | CHECK de dominio |
-| `dueDate?: string` | `due_date: date` | Formato `yyyy-MM-dd` |
+| `dueDate?: string` | `due_date: date` | `yyyy-MM-dd`, sin hora |
 | `tags: string[]` | `tags: text[]` | Default `{}` |
 | `order: number` | `"order": integer` | Posición en la columna |
 | `createdAt: string` | `created_at: timestamptz` | Enviado por el cliente |
 | `updatedAt: string` | `updated_at: timestamptz` | Trigger en UPDATE |
 | `completedAt?: string` | `completed_at: timestamptz` | Nullable |
+| `ownerId?: string` | `owner_id: text` | Lo fuerza el servidor |
 
-El mapeo vive en `src/lib/task-mapper.ts` y los tipos generados en
+El mapeo vive en `src/lib/task-mapper.ts` y los tipos en
 `src/lib/types/supabase.ts`.
 
 ---
@@ -142,78 +160,92 @@ El mapeo vive en `src/lib/task-mapper.ts` y los tipos generados en
         ↓
 [Zustand actualiza el estado de forma optimista]
         ↓
-[supabase-sync.pushTasks / deleteTasks]
-        ↓ (online)                         ↓ (offline o error)
-[REST INSERT/UPDATE/DELETE]          [cola taskboard:sync-queue]
+[POST /api/tasks (upsert) o DELETE /api/tasks]
         ↓
-[Supabase emite el cambio por Realtime]
+[requireSameOrigin + getSession + emailVerified]
         ↓
-[Otros clientes actualizan Zustand]
+[tasks-repo.ts: SQL parametrizado con owner_id de la sesión]
+        ↓
+[PostgreSQL]
+        ↓
+[Supabase Realtime emite el cambio]
+        ↓
+[Otros dispositivos actualizan Zustand]
 ```
 
-- Cada mutación del store calcula el diff real de tareas para no reenviar todo el
-  tablero.
-- `moveTask` también sincroniza `status` y `order`.
-- Las operaciones fallidas se guardan en la cola y se reintentan al reconectar.
+- El cuerpo de escritura usa `readJsonBody` con límite de 1 MiB.
+- El servidor valida cada tarea con Zod y descarta las inválidas; devuelve
+  `{ accepted, rejected }`.
+- El máximo por petición es de 500 tareas.
+- Si una escritura falla, el hook muestra un aviso y recarga el tablero desde el
+  servidor. No hay cola de reintentos.
+- Un `401` cierra la sesión y redirige a `/login`.
 
 ### 6.2 Lectura e inicialización
 
 ```text
-[App arranca]
-      ↓
-[migrateLegacyStorage: taskboard:v1 → taskboard:v2]
-      ↓
-[flushSyncQueue: sube pendientes]
-      ↓
-[fetchRemoteTasks: SELECT de tasks]
-      ↓
-[reconcileTasks: local vs remoto por updatedAt]
-      ↓
-[Zustand actualiza el tablero]
+[App arranca con sesión verificada]
+        ↓
+[GET /api/tasks]
+        ↓
+[rowToTask en el servidor]
+        ↓
+[replaceFromServer en Zustand]
+        ↓
+[useTasksRealtime pide /api/realtime/token y se suscribe]
+        ↓
+[Sondeo cada 30 s + foco + reconexión como respaldo]
 ```
 
-### 6.3 Reconciliación y conflictos
+### 6.3 Conflictos
 
-- Gana la tarea con `updatedAt` más reciente.
-- Las tareas que solo existen en local se muestran en un diálogo para subirlas.
-- Las que solo existen en remoto se incorporan al estado local.
-- La cola offline se vacía antes de reconciliar para no interpretar cambios propios
-  como tareas ajenas.
+No hay reconciliación local/remoto. PostgreSQL es la copia autoritativa y cada
+lectura reemplaza el estado en memoria. Si dos dispositivos escriben la misma
+tarea, gana la última escritura que llega al servidor; el resto de clientes
+reciben el `UPDATE` por Realtime o lo ven en el siguiente sondeo.
 
 ---
 
 ## 7. Cambios en el stack
 
-### 7.1 Dependencia nueva
+### 7.1 Dependencias
 
 ```bash
-pnpm add @supabase/supabase-js
+pnpm add @supabase/supabase-js   # solo Realtime
+pnpm add -D vitest               # pruebas unitarias
 ```
 
 ### 7.2 Archivos relevantes
 
 ```text
 src/
+├── proxy.ts                       # protección de rutas + CSP con nonce
+├── app/
+│   ├── page.tsx                   # guard de sesión y correo verificado
+│   └── api/
+│       ├── tasks/route.ts         # GET/POST/DELETE autenticados
+│       └── realtime/token/route.ts# JWT HS256 de 15 min
 ├── hooks/
-│   ├── use-supabase.ts        # acceso al cliente nullable
-│   └── use-tasks-sync.ts      # carga, Realtime, online/offline y migración
+│   ├── use-tasks-sync.ts          # carga, sondeo, foco/online y 401
+│   ├── use-tasks-realtime.ts      # canal autenticado y mapeo de eventos
+│   └── use-redirect-if-authenticated.ts
 ├── lib/
-│   ├── supabase.ts            # cliente singleton opcional
-│   ├── supabase-sync.ts       # writers, fetch y flush de la cola
-│   ├── sync-queue.ts          # cola offline en localStorage
-│   ├── task-sync.ts           # reconciliación por updatedAt
-│   ├── task-mapper.ts         # Task ↔ fila de Supabase
-│   ├── storage-migration.ts   # taskboard:v1 → taskboard:v2
-│   └── types/supabase.ts      # tipos generados desde Supabase
-├── components/ui/connection-status.tsx
-└── store/task-store.ts        # mutaciones + estado remoto
+│   ├── db.ts                      # pool único y TLS de Supabase
+│   ├── task-mapper.ts             # fila de Postgres → Task
+│   ├── tasks-repo.ts              # SQL parametrizado
+│   ├── tasks-sync.ts              # cliente de /api/tasks
+│   ├── realtime-token.ts          # firma del JWT
+│   └── supabase-client.ts         # cliente nullable solo para Realtime
+└── store/task-store.ts            # estado en memoria
+supabase/migrations/               # esquema, RLS, índices, rate limit y Realtime
+tests/                             # Vitest
 ```
 
 ### 7.3 Store
 
-El store expone los métodos remotos `syncFromSupabase`, `addTaskRemote`,
-`updateTaskRemote` y `deleteTaskRemote`. La suscripción Realtime vive en
-`use-tasks-sync` para mantener el store libre de efectos del navegador.
+El store expone `replaceFromServer` y mutaciones optimistas (`addTask`,
+`updateTask`, `deleteTask`, `moveTask`, etc.). No persiste tareas, no conoce
+Supabase y no se suscribe a nada: los efectos viven en los hooks.
 
 ---
 
@@ -221,37 +253,55 @@ El store expone los métodos remotos `syncFromSupabase`, `addTaskRemote`,
 
 | Estado | Indicador |
 |--------|-----------|
-| Supabase no configurado | Badge gris "Solo local" |
-| Conectando | Spinner "Conectando..." |
-| Conectado | Badge verde "Sincronizado" con hora |
-| Sin conexión | Badge gris "Sin conexión" |
+| Cargando | Esqueleto del tablero |
+| Conectado | Badge «Sincronizado» con hora de última sincronización |
+| Sin conexión | Badge «Sin conexión» |
 | Error | Badge rojo con tooltip y reintento |
+| Realtime no disponible | El badge sigue funcionando con el sondeo |
 
-Cuando hay tareas solo locales aparece un diálogo con la opción **Subir tareas** o
-**Ahora no**. El badge también permite reabrir el diálogo.
+El estado de sincronización es informativo; nunca bloquea la edición.
 
 ---
 
 ## 9. Seguridad
 
-- RLS habilitado con políticas públicas de MVP (`using (true)`), documentadas en la
-  migración.
-- Los roles `anon` y `authenticated` tienen permisos explícitos sobre la tabla;
-  sin ellos la API REST devuelve `42501 permission denied`.
-- La `anon key` es pública por diseño; la seguridad real depende de RLS.
-- No hay autenticación individual todavía. `owner_id` y las políticas por usuario
-  quedan como trabajo futuro.
-- `.env.local` está ignorado por git; `.env.example` documenta las variables.
+- **API**: sesión obligatoria, correo verificado, mismo origen y SQL parametrizado.
+- **RLS**: `tasks` activo; `authenticated` solo lee filas cuyo `owner_id` coincide
+  con `auth.jwt() ->> 'sub'` (evaluado en subconsulta).
+- **Realtime**: JWT de 15 minutos firmado en el servidor con
+  `SUPABASE_JWT_SECRET`. Sin token válido el canal no recibe eventos.
+- **Escrituras**: revocadas para `anon` y `authenticated`; el CRUD pasa por
+  `/api/tasks`.
+- **Cabeceras**: CSP con nonce por petición (permite `wss://*.supabase.co`),
+  `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS en
+  producción y `poweredByHeader: false`.
+- `.env.local` está ignorado por git; `.env.example` documenta cada variable.
 
 ---
 
-## 10. Migración de datos
+## 10. Migraciones y reproducibilidad
 
-1. **Local**: `migrateLegacyStorage()` copia `taskboard:v1` a `taskboard:v2` antes
-   de que Zustand hidrate. `taskboard:v1` se conserva como respaldo.
-2. **Remoto**: al conectar, las tareas que solo existen en local se ofrecen mediante
-   el diálogo de sincronización; al aceptar se hace `upsert` por `id`.
-3. **Exportación/importación JSON**: sigue disponible como respaldo manual.
+Las migraciones locales están ordenadas con las mismas versiones que el historial
+remoto de Supabase:
+
+| Versión | Contenido |
+|---------|-----------|
+| `20261109151132_align_tasks_schema_and_realtime` | Tabla `tasks`, trigger, índices y publicación. |
+| `20261109151500_better_auth_tables` | `user`, `session`, `account`, `verification`, `board` y `owner_id`. |
+| `20261109152043_grant_tasks_api_privileges` | Grants históricos de PostgREST. |
+| `20261109152450_make_tasks_migration_reproducible` | Guardas idempotentes del esquema. |
+| `20261110161929_enable_rls_auth_tables` | RLS en las tablas de Better Auth. |
+| `20261110171312_lock_down_tasks` | Revocación de grants y RLS de tareas. |
+| `20261110200442_pending_registrations` | Registro pendiente de verificación. |
+| `20261111161842_realtime_owner_read` | Lectura Realtime por dueño. |
+| `20261111162025_auth_rate_limit` | Contadores de rate limit. |
+| `20261111162255_tasks_owner_indexes` | Índices por dueño. |
+| `20261111174752_harden_policy_and_function` | Subconsulta de `auth.jwt()` y `search_path`. |
+| `20261111174801_harden_realtime_policy_jwt_subquery` | Misma policy, idempotente. |
+| `20261112040000_tasks_owner_not_null_and_board_index` | `owner_id NOT NULL` e índice de `board`. |
+
+No se aplican migraciones nuevas desde el panel sin crear antes el archivo local
+correspondiente: eso reintroduciría divergencia entre el repositorio y el proyecto.
 
 ---
 
@@ -260,21 +310,29 @@ Cuando hay tareas solo locales aparece un diálogo con la opción **Subir tareas
 ### CU-001: Crear tarea en tiempo real
 
 1. El formulario valida con Zod y llama a `addTask()`.
-2. Zustand añade la tarea y actualiza `localStorage`.
-3. `pushTasks()` hace `upsert` en Supabase.
-4. Realtime emite `INSERT`; los demás clientes llaman a `addTaskRemote()`.
+2. Zustand añade la tarea de forma optimista.
+3. `pushTasks()` hace `POST /api/tasks`.
+4. El servidor valida, fuerza `owner_id` y hace `upsert`.
+5. Realtime emite `INSERT`; los demás dispositivos actualizan la tarjeta.
 
 ### CU-002: Mover tarea (drag & drop)
 
 1. `moveTask()` actualiza `status` y `order` de forma optimista.
-2. El diff se envía a Supabase.
-3. Realtime emite `UPDATE`; los demás clientes actualizan la tarjeta.
+2. El diff se envía a `/api/tasks`.
+3. Realtime emite `UPDATE`; los demás dispositivos actualizan la tarjeta.
 
-### CU-003: Conexión perdida y recuperada
+### CU-003: Realtime no disponible
 
-1. La app detecta `offline` y muestra "Sin conexión".
-2. Las mutaciones se guardan en `taskboard:sync-queue`.
-3. Al volver `online`, se vacía la cola y se reconcilia con el remoto.
+1. El canal falla, falta `SUPABASE_JWT_SECRET` o el WebSocket se cae.
+2. La UI sigue funcionando; el sondeo cada 30 s, el foco y la reconexión
+   actualizan el tablero.
+3. Al volver el WebSocket, el hook vuelve a pedir token y resincroniza.
+
+### CU-004: Sesión caducada
+
+1. Una escritura responde `401`.
+2. El hook cierra la sesión y redirige a `/login`.
+3. No se muestran datos obsoletos como si fueran propios.
 
 ---
 
@@ -282,44 +340,46 @@ Cuando hay tareas solo locales aparece un diálogo con la opción **Subir tareas
 
 ### CA-001: Base de datos
 
-- [x] Tabla `tasks` con el esquema definido.
-- [x] Índices creados.
-- [x] Trigger `updated_at` funcionando.
-- [x] RLS, permisos y publicación Realtime configurados.
-- [x] Migración versionada y reproducible desde un proyecto vacío.
+- [x] Tabla `tasks` con `owner_id NOT NULL` y FK a `public."user"`.
+- [x] Índices por dueño, estado y orden.
+- [x] Trigger `updated_at` con `search_path` fijo.
+- [x] RLS, privilegios y publicación Realtime configurados.
+- [x] Migraciones ordenadas y reproducibles desde un proyecto vacío.
 
 ### CA-002: Cliente Supabase
 
-- [x] Cliente singleton nullable.
-- [x] Variables de entorno documentadas y configuradas en Vercel.
-- [x] La app funciona sin Supabase (modo local).
+- [x] Cliente singleton nullable, usado solo para Realtime.
+- [x] Variables documentadas y configuradas en Vercel.
+- [x] Sin variables, el tablero sigue funcionando con sondeo.
 
 ### CA-003: Sincronización
 
-- [x] INSERT, UPDATE y DELETE llegan a Supabase (probado por REST).
-- [x] Realtime entrega INSERT, UPDATE y DELETE (probado por WebSocket).
-- [x] Al recargar se cargan los datos de Supabase.
+- [x] `GET`, `POST` y `DELETE /api/tasks` funcionan con sesión.
+- [x] Las escrituras sin sesión, sin correo verificado o desde otro origen se
+  rechazan.
+- [x] Realtime entrega INSERT, UPDATE y DELETE de la cuenta propia.
+- [x] RLS impide recibir eventos de otras cuentas.
+- [x] El sondeo mantiene el tablero al día si Realtime falla.
 - [x] Drag & drop sincroniza `status` y `order`.
-- [x] Cola offline y reconciliación por `updatedAt`.
+- [x] No existe cola offline ni reconciliación local/remoto.
 
-### CA-004: Transición
+### CA-004: Verificación
 
-- [x] `taskboard:v1` → `taskboard:v2` automático.
-- [x] Diálogo para subir tareas solo locales.
-- [x] Badge de estado y reintento automático.
-- [ ] Validación visual manual en navegador (drag & drop, diálogo, offline/online y
-  dos dispositivos). Pendiente de QA humano; ver `QA.md`.
+- [x] `pnpm lint`, `next typegen`, `tsc --noEmit`, `pnpm test` y `pnpm build` en
+  verde.
+- [x] QA manual con dos dispositivos el 11/11/2026.
+- [x] CI configurada en `.github/workflows/ci.yml`.
 
 ---
 
 ## 13. Enmienda constitucional
 
-**Artículo VI (modificado)**:
+**Artículo VI (v3.0.0)**:
 
-> Están fuera de alcance: cuentas de usuario complejas y notificaciones push.
-> **Permitido**: sincronización entre dispositivos y colaboración en tiempo real
-> mediante Supabase (capa gratuita), manteniendo `localStorage` como respaldo.
+> PostgreSQL es la única fuente de verdad. Realtime se mantiene como función
+> secundaria para la misma cuenta en varios dispositivos, autenticado con un JWT
+> corto y limitado por RLS a la lectura de las tareas propias.
 
 ---
 
-**Versión**: 1.1.0 | **Estado**: Implementado con QA visual pendiente
+**Versión**: 2.0.0 | **Estado**: Implementado y verificado en producción

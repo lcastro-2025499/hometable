@@ -1,17 +1,25 @@
 # Research: Sincronización en tiempo real y multi-dispositivo
 
-**Código**: 300-sync-realtime | **Fecha**: 2026-11-04 | **Estado**: Implementado (2026-11-09)
+**Código**: 300-sync-realtime | **Fecha**: 2026-11-04 | **Actualizado**: 2026-11-11
+| **Estado**: Implementado y en producción
 
 ---
 
-## 0. Preguntas sin resolver
+## 0. Preguntas resueltas
 
 | Pregunta | Estado | Respuesta |
 |----------|--------|-----------|
-| ¿Qué tipo de cuenta de Supabase crear? | ✅ Resuelta | Proyecto gratuito en Supabase.com |
-| ¿Cómo manejar usuarios sin cuenta? | ✅ Resuelta | Modo invitado/anónimo con datos públicos |
-| ¿Qué hacer con datos localStorage existentes? | ✅ Resuelta | Ofrecer sincronización manual al iniciar |
-| ¿Cómo manejar conflictos de sincronización? | ✅ Resuelta | Timestamp `updated_at` como resolutor |
+| ¿Qué servicio ofrece Postgres y WebSocket gratis? | ✅ Resuelta | Supabase (PostgreSQL + Realtime). |
+| ¿Dónde vive la lógica de escritura? | ✅ Resuelta | En `/api/tasks`, con SQL parametrizado y la sesión de Better Auth. |
+| ¿Cómo se autentica Realtime sin exponer el secreto? | ✅ Resuelta | JWT HS256 de 15 min firmado en el servidor. |
+| ¿Cómo se limita Realtime a las tareas propias? | ✅ Resuelta | RLS con `owner_id = auth.jwt() ->> 'sub'`. |
+| ¿Qué pasa si Realtime falla? | ✅ Resuelta | Sondeo cada 30 s, foco y reconexión. |
+| ¿Cómo se resuelven conflictos? | ✅ Resuelta | PostgreSQL es autoritativo; gana la última escritura que llega al servidor. |
+| ¿Se conservan los datos locales de la versión 1.x? | ✅ Resuelta | No hay migración automática; el usuario vuelve a introducir sus tareas. |
+
+> La arquitectura inicial (localStorage + cola offline + reconciliación) se
+> descartó en la versión 2.0. Las secciones siguientes documentan las decisiones
+> vigentes y dejan constancia del cambio.
 
 ---
 
@@ -22,175 +30,174 @@
 | Recurso | Límite | Comentario |
 |---------|--------|------------|
 | Base de datos | 500 MB | Suficiente para miles de tableros |
-| Rows (registros) | 500,000/mes | ~17,000 tasks/día |
-| Realtime mensajes | 500,000/mes | Cambios sincronizados |
-| API requests | 2,000,000/mes | Búsquedas y cargas |
-| Auth usuarios | 5,000 | Con futuro plan pagado |
-| Edge Functions | 125,000 invocaciones | Para lógica adicional |
+| Realtime mensajes | 500 000/mes | Cambios de la cuenta propia |
+| API requests | 2 000 000/mes | Cargas y sondeo |
+| Auth usuarios | 50 000 MAU | Better Auth usa las tablas, no el Auth de Supabase |
+| Edge Functions | 500 000 invocaciones | No se usan en esta versión |
 
-**Conclusión**: El plan gratuito cubre el MVP sin costo.
+**Conclusión**: el plan gratuito cubre el producto sin costo.
 
-### 1.2 Estructura de Realtime en Supabase
+### 1.2 Estructura de Realtime
 
-Supabase Realtime funciona mediante:
-- **Channels**: Canales pub/sub para cada tabla
-- **Broadcast**: Mensaje enviado a todos los suscriptores
-- **Presence**: Estado de conexión de usuarios
+Supabase Realtime ofrece:
 
-**Ejemplo de uso**:
-```typescript
-const channel = supabase.channel('public:tasks')
-  .on('postgres_changes', {
-    event: '*',
-    schema: 'public',
-    table: 'tasks'
-  }, (payload) => {
-    // payload.new o payload.old
-  })
-  .subscribe()
-```
+- **Channels**: canales pub/sub por tabla.
+- **Broadcast**: mensajes a los suscriptores.
+- **Presence**: estado de conexión.
+
+El canal usado por la app es `tasks:<userId>` con `postgres_changes` y filtro
+`owner_id=eq.<userId>`. Además, RLS vuelve a comprobar el `sub` del JWT, de modo
+que el filtro del cliente no es la única defensa.
 
 ### 1.3 Límites de WebSocket en Vercel
 
-Vercel no permite servidores WebSocket persistentes en el plan Hobby. Soluciones:
-1. **External**: Supabase Realtime (WebSocket propios) ✅
-2. **External**: Pusher/Ably (servicios de pago) ❌ (presupuesto $0)
-3. **Internal**: usar API routes con WebSocket → no funciona bien en Vercel ❌
+Vercel no mantiene servidores WebSocket persistentes en el plan Hobby. Soluciones
+evaluadas:
 
-**Decisión**: Usar Supabase Realtime (solución externa, gratuita).
+1. **Supabase Realtime** (WebSocket externo gestionado) ✅
+2. Pusher/Ably (servicios de pago) ❌
+3. WebSocket en API Routes de Vercel ❌
+
+**Decisión**: Supabase Realtime.
 
 ---
 
 ## 2. Alternativas de base de datos
 
-### 2.1 Comparativa
-
 | Base de datos | Costo | WebSocket | Límites gratuitos | Recomendación |
 |---------------|-------|-----------|-------------------|---------------|
-| Supabase | Gratis | ✅ | 500k msgs/mes | ✅ **Mejor opción** |
-| Firebase | Gratis* | ✅ | 50k lecturas/día | ⚠️ Límite bajo |
+| Supabase | Gratis | ✅ | 500k msgs/mes | ✅ **Elegida** |
+| Firebase | Gratis* | ✅ | 50k lecturas/día | ⚠️ Modelo NoSQL y límite bajo |
 | Neon.tech | Gratis* | ❌ | 20k invocaciones | ❌ Sin Realtime |
-| PlanetScale | Gratis* | ❌ | 5GB datos | ❌ Sin Realtime |
-| Railway | Gratis* | ✅ (Socket.io) | 500h/mes | ❌ No compatible Vercel |
+| PlanetScale | Gratis* | ❌ | 5 GB | ❌ Sin Realtime |
 
-**Conclusión**: Supabase es la única opción que cumple con WebSocket + gratuito + compatible Vercel.
+**Conclusión**: Supabase es la única opción que cumple Postgres + Realtime +
+compatibilidad con Vercel sin costo.
 
 ---
 
-## 3. Consideraciones técnicas
+## 3. Decisiones técnicas
 
-### 3.1 UUID v4 para IDs
+### 3.1 Servidor como única vía de escritura
 
-Pregunta: ¿Generar UUID en cliente o en BD?
+**Alternativas**:
 
 | Opción | Pros | Contras |
 |--------|------|---------|
-| Cliente | Menos roundtrips | Puede haber colisiones |
-| BD | Garantizado único | Necesita 2 calls (insert + fetch) |
+| PostgREST desde el navegador | Menos código | Expone la tabla, RLS compleja y claves públicas |
+| API Routes con `pg` | Dueño derivado de la sesión, SQL parametrizado, auditoría | Una capa más |
 
-**Decisión**: Generar UUID v4 en cliente usando `crypto.randomUUID()` (ya usado en la app).
+**Decisión**: API Routes. El navegador nunca escribe en Postgres y `owner_id` no
+puede falsificarse desde el cuerpo de la petición.
 
-### 3.2 Sincronización de orden
+### 3.2 Realtime de solo lectura
 
-El campo `order` es crítico para el drag-and-drop. Necesitamos:
+**Alternativas**:
 
-```sql
--- Estrategia: Reordenar en lote al soltar
-UPDATE tasks SET "order" = 0 WHERE id = 'a';
-UPDATE tasks SET "order" = 1 WHERE id = 'b';
-UPDATE tasks SET "order" = 2 WHERE id = 'c';
-```
+| Opción | Pros | Contras |
+|--------|------|---------|
+| Realtime con escrituras | Menos latencia | RLS de escritura por fila, difícil de auditar |
+| Realtime de solo lectura | Simple y seguro | Las escrituras siguen por la API |
 
-**Problema**: Esto genera 3 llamadas a la API.
+**Decisión**: solo lectura de las tareas propias. Las escrituras pasan por
+`/api/tasks`.
 
-**Solución alternativa**: Endpoint batch update vía Supabase RPC (función SQL).
+### 3.3 Autenticación del canal
 
-### 3.3 Timestamps y sincronización
+**Alternativas**:
 
-Para evitar conflictos, usamos:
-- `created_at`: Timestamp inicial (auto en BD)
-- `updated_at`: Timestamp de última modificación (trigger)
-- `completed_at`: Timestamp de cuando se marcó done
+| Opción | Pros | Contras |
+|--------|------|---------|
+| Anon key sin JWT | Sencillo | Sin identidad, RLS no puede filtrar |
+| JWT de Supabase Auth | Estándar | Better Auth no emite esos tokens |
+| JWT propio con el secreto del proyecto | Control total | Hay que firmarlo y rotarlo con cuidado |
+
+**Decisión**: JWT propio HS256 de 15 minutos con `sub`, `role=authenticated` y
+`aud=authenticated`, firmado con `SUPABASE_JWT_SECRET`.
+
+### 3.4 UUID generado en el cliente
+
+Se mantiene `crypto.randomUUID()` para que la UI pueda ser optimista sin esperar
+al servidor. El `id` se valida con `z.string().uuid()` en `tasks-repo.ts`.
+
+### 3.5 Orden y `updated_at`
+
+El orden se calcula en el cliente y se envía como parte del `upsert`. El trigger de
+PostgreSQL impone `updated_at` en cada UPDATE; el payload de Realtime actualiza el
+estado local con ese valor.
+
+### 3.6 Sondeo de respaldo
+
+**Decisión**: 30 segundos, más un refresco al recuperar el foco y al volver la
+conexión. Es más barato que mantener dos mecanismos de tiempo real y cubre los
+casos en que el WebSocket falla.
+
+### 3.7 Migraciones
+
+**Problema**: el historial remoto de Supabase tenía versiones sin archivo local y
+los archivos locales tenían versiones distintas. Un `supabase db push` desde cero
+no reproducía el esquema.
+
+**Decisión**: renombrar los archivos locales a las versiones remotas y añadir los
+archivos históricos que faltaban. La fuente de verdad es el conjunto ordenado de
+`supabase/migrations/`; no se aplican migraciones nuevas desde el panel sin crear
+antes el archivo.
 
 ---
 
-## 4. Migración de datos: escenarios
+## 4. Seguridad
 
-### Escenario A: Usuario nuevo
+### 4.1 Permisos además de RLS
 
-```
-App arranca → No hay localStorage → Llamada a Supabase GET /tasks → Si vacío, crear tabla vacía
-```
+PostgREST necesita privilegios de tabla además de RLS. En la versión inicial esto
+provocó `42501 permission denied`. La arquitectura actual revoca todos los permisos
+de `anon` y las escrituras de `authenticated`; solo queda `SELECT` para Realtime.
 
-### Escenario B: Usuario existente con localStorage
+### 4.2 Carrera al conectar Realtime
 
-```
-App arranca → Hay localStorage → Intentar conectar a Supabase → Si conecta → Preguntar "Sincronizar mis datos?" → Si sí → upsert → Limpiar localStorage
-```
+Insertar justo en el callback `SUBSCRIBED` puede perder el evento porque la
+conexión de replicación aún está arrancando. La app hace una carga inicial por API
+y resincroniza al suscribirse; el QA espera unos segundos antes de escribir.
 
-### Escenario C: Sin conexión
+### 4.3 Sesión caducada
 
-```
-App arranca → Falla conexión a Supabase → Usar localStorage → Mostrar badge "Offline" → Cuando vuelva conexión → Preguntar sincronizar
-```
+`tasks-sync.ts` invoca un manejador de `401` que cierra la sesión y redirige a
+`/login`. Así un token revocado no deja la UI mostrando datos que ya no se pueden
+escribir.
+
+### 4.4 TLS de Postgres
+
+Supabase usa una CA interna y el pooler devuelve `SELF_SIGNED_CERT_IN_CHAIN` si se
+valida la cadena con las CAs del sistema. `db.ts` acepta `SUPABASE_DB_CA_CERT` para
+validación completa; sin ella mantiene el cifrado sin validar la cadena para no
+romper la conexión.
 
 ---
 
-## 5. Decisiones técnicas
+## 5. Resultados de la implementación
 
-| Tema | Decisión | Justificación |
-|------|----------|---------------|
-| Base de datos | Supabase | WebSocket gratuito, compatible Vercel |
-| WebSocket | Supabase Realtime | No requiere autohospedaje |
-| Auth | Modo invitado | Sin cuentas para MVP |
-| ID | UUID v4 cliente | Ya implementado |
-| Orden | Update individual | Simple, suficiente para MVP |
-| Conflictos | Timestamp | Último cambio gana |
+| Tema | Resultado |
+|------|-----------|
+| Dependencia | `@supabase/supabase-js` 2.119.0 (solo Realtime) |
+| Esquema | Tabla, trigger, índices, RLS y publicación Realtime |
+| API | `GET`, `POST` y `DELETE /api/tasks` autenticados |
+| Realtime | INSERT, UPDATE y DELETE recibidos por WebSocket |
+| Aislamiento | Policy validada con `request.jwt.claims` simulado |
+| Respaldo | Sondeo cada 30 s, foco y reconexión |
+| Pruebas | 46 pruebas Vitest |
+| Puertas | lint, typegen, tsc, test y build en verde |
+| CI | `.github/workflows/ci.yml` |
 
 ---
 
 ## 6. Próximos pasos
 
-Todos los pasos del diseño inicial se completaron:
-
 1. ✅ Proyecto Supabase creado (`tfjbkvxxdglxujnrcaeb`).
-2. ✅ Tabla `tasks` y migración versionada aplicadas.
-3. ✅ Cliente Supabase singleton nullable.
-4. ✅ Hook `use-supabase`.
-5. ✅ Store con métodos remotos y sincronización de todas las mutaciones.
-6. ✅ UI de estado de conexión y diálogo de migración.
-7. ✅ Migración `taskboard:v1` → `taskboard:v2` y cola offline.
-
-## 7. Resultados de la implementación
-
-| Tema | Resultado |
-|------|-----------|
-| Dependencia | `@supabase/supabase-js` 2.118.0 |
-| Esquema | Tabla, trigger, índices, RLS, `GRANT` y publicación Realtime |
-| REST | INSERT 201, UPDATE 200, SELECT 200, DELETE 200 |
-| Realtime | INSERT, UPDATE y DELETE recibidos por WebSocket |
-| Reconciliación | Por `updatedAt`, con cola offline y diálogo para tareas solo locales |
-| Fallback | Cliente nullable; sin variables la app funciona en modo local |
-| Puertas | `pnpm lint`, `next typegen`, `tsc --noEmit` y `pnpm build` en verde |
-
-### 7.1 Hallazgo importante: permisos además de RLS
-
-Las políticas RLS existían, pero el rol `anon` no tenía privilegios sobre la tabla y
-PostgREST devolvía `42501 permission denied for table tasks`. Se corrigió con:
-
-```sql
-grant select, insert, update, delete on table public.tasks to anon, authenticated;
-```
-
-### 7.2 Hallazgo importante: carrera al conectar Realtime
-
-Insertar justo en el callback `SUBSCRIBED` puede perder el evento porque la conexión
-de replicación aún está arrancando. La app no depende de ese evento inmediato: hace
-una carga inicial por REST y después escucha cambios. La prueba de QA espera unos
-segundos tras la suscripción antes de escribir.
-
-### 7.3 Decisión sobre el trigger `updated_at`
-
-Se mantiene el trigger del servidor, pero el cliente también envía `updatedAt` para
-conservar el orden de cambios. En un UPDATE gana la hora del servidor; el payload de
-Realtime actualiza el estado local con ese valor.
+2. ✅ Migraciones ordenadas y reproducibles.
+3. ✅ API autenticada y SQL parametrizado.
+4. ✅ Realtime autenticado y RLS.
+5. ✅ Sondeo de respaldo y manejo de `401`.
+6. ✅ Pruebas unitarias y CI.
+7. ✅ QA manual con dos dispositivos.
+8. ⏳ Colaboración entre cuentas (tableros compartidos, invitaciones y chat),
+   fuera del alcance actual.
