@@ -95,8 +95,14 @@ export function VerifyEmailForm({ initialEmail }: { initialEmail: string }) {
         retryAfterSeconds?: number;
       };
 
-      if (res.status === 429 && data.retryAfterSeconds) {
-        setCooldown(data.retryAfterSeconds);
+      const retryAfterHeader = Number(res.headers.get("retry-after"));
+      const retryAfter =
+        Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+          ? retryAfterHeader
+          : data.retryAfterSeconds;
+
+      if (res.status === 429 && retryAfter) {
+        setCooldown(retryAfter);
         toast.error(data.error || "Espera un momento antes de pedir otro código.");
         return;
       }

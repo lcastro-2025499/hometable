@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,14 +13,41 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authenticated";
 import { requestPasswordReset, resetPassword } from "@/lib/auth-client";
 import { forgotPasswordSchema, resetPasswordSchema, type ForgotPasswordSchema, type ResetPasswordSchema } from "@/lib/auth-validation";
 
 export default function ForgotPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-dvh items-center justify-center bg-muted/30">
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <ForgotPasswordContent />
+    </Suspense>
+  );
+}
+
+function ForgotPasswordContent() {
   const router = useRouter();
-  const [step, setStep] = useState<"request" | "reset">("request");
+  const searchParams = useSearchParams();
+  // Better Auth redirige el enlace del correo a /forgot-password?token=... o
+  // ?error=INVALID_TOKEN. El token se usa como valor inicial del formulario y
+  // abre directamente el paso de nueva contraseña.
+  const tokenFromLink = searchParams.get("token") ?? "";
+  const errorFromLink = searchParams.get("error");
+
+  const [step, setStep] = useState<"request" | "reset">(
+    tokenFromLink ? "reset" : "request",
+  );
   const [loading, setLoading] = useState(false);
   const [sentEmail, setSentEmail] = useState("");
+  const fromLink = Boolean(tokenFromLink);
+
+  useRedirectIfAuthenticated();
 
   // Form for Step 1: Request reset code
   const requestForm = useForm<ForgotPasswordSchema>({
@@ -31,8 +58,20 @@ export default function ForgotPasswordPage() {
   // Form for Step 2: Enter code + new password
   const resetForm = useForm<ResetPasswordSchema>({
     resolver: zodResolver(resetPasswordSchema),
-    defaultValues: { token: "", password: "", confirmPassword: "" },
+    defaultValues: { token: tokenFromLink, password: "", confirmPassword: "" },
   });
+
+  useEffect(() => {
+    if (errorFromLink) {
+      toast.error("El enlace de recuperación no es válido o caducó.", {
+        description: "Solicita un código nuevo para continuar.",
+      });
+    }
+
+    if (tokenFromLink || errorFromLink) {
+      window.history.replaceState({}, "", "/forgot-password");
+    }
+  }, [tokenFromLink, errorFromLink]);
 
   const onRequestSubmit = async (values: ForgotPasswordSchema) => {
     setLoading(true);
@@ -106,12 +145,14 @@ export default function ForgotPasswordPage() {
         <Card className="border shadow-lg">
           <CardHeader className="space-y-1">
             <CardTitle className="text-xl">
-              {step === "request" ? "Recuperar contraseña" : "Ingresa tu nuevo password"}
+              {step === "request" ? "Recuperar contraseña" : "Ingresa tu nueva contraseña"}
             </CardTitle>
             <CardDescription>
               {step === "request"
                 ? "Te enviaremos un código de verificación a tu correo registrado."
-                : `Ingresa el código enviado a ${sentEmail} y tu nueva contraseña.`}
+                : fromLink
+                  ? "Tu enlace es válido. Elige una nueva contraseña para tu cuenta."
+                  : `Ingresa el código enviado a ${sentEmail} y tu nueva contraseña.`}
             </CardDescription>
           </CardHeader>
           <CardContent>
