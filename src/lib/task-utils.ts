@@ -201,10 +201,10 @@ export function moveTaskToColumn(
 
   if (!sameColumn) {
     tasks
-      .filter((task) => task.status === moving.status)
+      .filter((task) => task.status === moving.status && task.id !== id)
       .sort(byOrder)
       .forEach((task, position) => {
-        if (task.id !== id) updates.set(task.id, { ...task, order: position });
+        updates.set(task.id, { ...task, order: position });
       });
   }
 
