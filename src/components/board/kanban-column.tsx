@@ -44,7 +44,7 @@ export function KanbanColumn({
   onClearCompleted,
 }: KanbanColumnProps) {
   const meta = STATUS_META[status];
-  const { setNodeRef, isOver } = useDroppable({ id: status });
+  const { setNodeRef } = useDroppable({ id: status });
 
   return (
     <section
@@ -110,7 +110,6 @@ export function KanbanColumn({
         ref={setNodeRef}
         className={cn(
           "flex min-h-28 flex-1 flex-col gap-2 rounded-b-xl p-2 transition-colors",
-          isOver && "bg-muted/60",
         )}
       >
         <SortableContext

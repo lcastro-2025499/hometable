@@ -84,9 +84,9 @@ export function useTasksSync(): TasksSyncResult {
     void refresh();
   }, [refresh]);
 
-  // Sincronización automática de entrada (pull) cada 30s si no hay cambios locales
+  // Sincronización automática de entrada (pull) cada 30s
   useEffect(() => {
-    if (!userId || isDirty) return;
+    if (!userId) return;
 
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -95,7 +95,7 @@ export function useTasksSync(): TasksSyncResult {
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [userId, isDirty, refresh]);
+  }, [userId, refresh]);
 
   // Advertencia de cambios sin guardar
   useEffect(() => {
