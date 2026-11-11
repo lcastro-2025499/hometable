@@ -2,18 +2,32 @@ import { Pool } from "pg";
 
 /**
  * Pool único de PostgreSQL para todo el servidor (Better Auth y rutas de
- * tareas). Reutilizarlo evita agotar las conexiones directas de Supabase en
- * despliegues serverless.
+ * tareas).
+ *
+ * En despliegues serverless se usa primero `DATABASE_URL`, que debe apuntar al
+ * pooler de Supabase (puerto 6543) para no agotar las conexiones directas.
+ * `DIRECT_URL` queda solo como respaldo para entornos locales o tareas de
+ * migración. Reutilizar el pool entre invocaciones evita abrir una conexión
+ * nueva por petición.
  */
 
-const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL;
 
-const needsSsl =
-  process.env.NODE_ENV === "production" ||
-  Boolean(process.env.DATABASE_URL?.includes("supabase.co")) ||
-  Boolean(process.env.DATABASE_URL?.includes("pooler.supabase.com")) ||
-  Boolean(process.env.DIRECT_URL?.includes("supabase.co")) ||
-  Boolean(process.env.DIRECT_URL?.includes("pooler.supabase.com"));
+/** Solo los hosts de Supabase necesitan TLS con su CA interna. */
+function needsSsl(value?: string): boolean {
+  if (!value) return false;
+
+  try {
+    const { hostname } = new URL(value);
+    return (
+      hostname.endsWith(".supabase.co") ||
+      hostname.endsWith(".supabase.com") ||
+      hostname.endsWith(".supabase.net")
+    );
+  } catch {
+    return false;
+  }
+}
 
 const globalForDb = globalThis as unknown as { hometablePool?: Pool };
 
@@ -21,7 +35,7 @@ export const pool =
   globalForDb.hometablePool ??
   new Pool({
     connectionString,
-    ssl: needsSsl ? { rejectUnauthorized: false } : false,
+    ssl: needsSsl(connectionString) ? { rejectUnauthorized: false } : false,
     max: process.env.NODE_ENV === "production" ? 3 : 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
