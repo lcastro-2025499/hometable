@@ -128,3 +128,8 @@ Vercel (Production, Preview y Development).
 12. `7444fb3` fix(auth): allow localhost during production builds
 13. `06d2c5d` build(deps): move tooling types and CLI to devDependencies
 14. `09261bf` refactor(auth): share the password validation schema
+15. `3e8a20c` docs: document the server-first architecture and environment
+16. `7a8de68` docs: rewrite the progress log for this session
+17. `a2f4a97` docs: update agent rules for the server-first model
+18. `82bf4cd` fix(ui): update the app description
+19. `7299714` refactor(tasks): reuse the shared request helpers
