@@ -26,9 +26,18 @@ Reglas del proyecto:
   adaptadas a Hometable; no edites las plantillas core de `.specify/templates/`.
 - La UI y todos los documentos SDD se escriben en español.
 - El producto es una aplicación web full-stack con Next.js App Router: autenticación obligatoria con **Better Auth** (adaptador PostgreSQL conectado a Supabase), persistencia y sincronización multi-dispositivo vía Supabase.
-- La fuente de verdad del esquema es
-  `supabase/migrations/20261109000000_align_tasks_schema.sql` y las migraciones de Better Auth. Incluye tablas de usuario, sesiones, cuentas, verificación, tareas con `owner_id`, índices, RLS y publicación Realtime.
-- Se usan variables públicas (`NEXT_PUBLIC_*`) en el cliente y claves privadas en el servidor (`BETTER_AUTH_SECRET`, `RECAPTCHA_SECRET_KEY`, `RESEND_API_KEY`). Nunca expongas secretos; documenta las variables en `.env.example` y mantén `.env.local` fuera de git.
+- La fuente de verdad del esquema es el conjunto ordenado de
+  `supabase/migrations/`. Incluye tablas de usuario, sesiones, cuentas,
+  verificación, registros pendientes, tareas con `owner_id`, rate limit,
+  índices, RLS y publicación Realtime.
+- PostgreSQL es la única fuente de verdad de las tareas. No reintroduzcas
+  persistencia local de tareas, cola offline, reconciliación local/remoto,
+  datos de ejemplo ni importación/exportación. Solo el tema puede vivir en
+  `localStorage`.
+- Se usan variables públicas (`NEXT_PUBLIC_*`) en el cliente y claves privadas
+  en el servidor (`BETTER_AUTH_SECRET`, `SUPABASE_JWT_SECRET`, `DATABASE_URL`,
+  `RECAPTCHA_SECRET_KEY`, `RESEND_API_KEY`). Nunca expongas secretos; documenta
+  las variables en `.env.example` y mantén `.env.local` fuera de git.
 
 ## Reglas de commits y seguridad:
 
