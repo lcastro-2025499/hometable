@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const originError = requireSameOrigin(request);
   if (originError) return originError;
 
-  const body = await readJsonBody(request);
+  const body = await readJsonBody(request, 16 * 1024);
   if (!body.ok) return body.response;
 
   const parsed = registerPayloadSchema.safeParse(body.data);
