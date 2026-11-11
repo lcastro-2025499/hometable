@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { signRealtimeToken } from "@/lib/realtime-token";
 
-export const runtime = "nodejs";
-
 /**
  * Emite un JWT corto para que el navegador pueda abrir un canal de Supabase
  * Realtime con RLS. Nunca devuelve secretos ni datos de la sesión.
