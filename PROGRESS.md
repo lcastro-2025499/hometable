@@ -1,11 +1,13 @@
 # Progreso: modernización de Hometable
 
 **Sesión:** migración a servidor como fuente única de verdad, Realtime
-autenticado y endurecimiento de seguridad.
+autenticado, endurecimiento de seguridad y auditoría de reproducibilidad,
+pruebas y CI.
 
-**Estado:** implementación terminada, desplegada en producción y QA manual
-verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
-`origin` y desplegable en Vercel.
+**Estado:** implementación terminada y desplegada en producción; QA manual
+verificado con dos dispositivos el 11/11/2026. La auditoría posterior dejó las
+migraciones reproducibles, 46 pruebas Vitest y CI en verde. `master` permanece
+desplegable en Vercel.
 
 ## Objetivo
 
@@ -70,8 +72,9 @@ verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
 - [x] Cabeceras de seguridad: CSP con allowlist de reCAPTCHA y Supabase,
   `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS en
   producción y `poweredByHeader: false`.
-- [x] `db.ts` prefiere `DATABASE_URL` (pooler), usa `DIRECT_URL` solo como
-  respaldo y limita TLS a hosts de Supabase.
+- [x] `db.ts` exige `DATABASE_URL` (pooler) en producción, sin caer a
+  `DIRECT_URL`; en local acepta la conexión directa y usa
+  `SUPABASE_DB_CA_CERT` para validar TLS cuando está definida.
 - [x] Índices `(owner_id, status, order)` y `(owner_id, created_at desc)`;
   retirados los índices globales obsoletos.
 - [x] Dependencias de tipos y CLI movidas a `devDependencies`; Node 22 exigido.
@@ -100,6 +103,10 @@ verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
   `search_path = ''` y `pg_catalog.now()`.
 - [x] Advisors de Supabase sin avisos `WARN`: sin `auth_rls_initplan` ni
   `function_search_path_mutable`.
+- [x] `pnpm test`: 46 pruebas en 6 archivos, todas en verde.
+- [x] `pnpm build` verificado sin `.env.local`, con las mismas variables
+  ficticias que CI.
+- [x] CI ejecuta las cinco puertas automatizadas en cada push y pull request.
 
 ### Despliegue y producción
 
@@ -142,6 +149,41 @@ verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
   `YYYY-MM-DD` y `rowToTask` normaliza cualquier valor que llegue.
 - [x] Commit `29c827d` desplegado en producción.
 
+### Auditoría de reproducibilidad, pruebas y seguridad (12/11/2026)
+
+- [x] Migraciones locales renombradas a las versiones del historial remoto de
+  Supabase; añadidos los archivos históricos que faltaban
+  (`20261109152043`, `20261109152450`, `20261110161929`,
+  `20261111174801` y `20261112040000`).
+- [x] `tasks.owner_id` pasó a `NOT NULL` (0 filas nulas comprobadas antes) y se
+  creó `idx_board_owner_id`.
+- [x] `readJsonBody` lee por streaming y aplica un límite real de bytes aunque
+  falte `Content-Length`; las rutas de autenticación usan 16 KiB.
+- [x] `clientIp` prioriza `x-real-ip`, que Vercel sobrescribe, para que el
+  cliente no pueda rotar la clave del rate limit.
+- [x] `disableSignUp: true`: el único alta es `/api/auth/register` con
+  reCAPTCHA + OTP.
+- [x] Rate limit de Better Auth persistido en `public.auth_rate_limit` mediante
+  `consumeRateLimit` como `customStorage`, compartido entre instancias.
+- [x] Validación de esquema de Better Auth desactivada durante `next build`
+  (`NEXT_PHASE === "phase-production-build"`), activa en ejecución.
+- [x] CSP con nonce por petición en `src/proxy.ts`; retirada de
+  `next.config.ts`. El layout lee el nonce con `headers()` y todas las rutas se
+  renderizan por petición (`export const instant = false`).
+- [x] Eliminada la redirección de rutas públicas basada solo en la cookie;
+  `useRedirectIfAuthenticated` espera la sesión real y evita bucles con cookies
+  caducadas.
+- [x] Un `401` de `/api/tasks` cierra la sesión y redirige a `/login`.
+- [x] `/forgot-password` acepta `?token=`/`?error=` y el formulario de
+  verificación respeta `Retry-After`.
+- [x] Corregido `moveTaskToColumn`: al mover una tarea, la columna de origen se
+  renumera sin contar la tarea movida.
+- [x] Vitest 3 con 46 pruebas en 6 archivos y scripts `test`/`test:watch`.
+- [x] CI en `.github/workflows/ci.yml` con install, lint, typegen, tipos, tests
+  y build usando variables ficticias.
+- [x] Constitución v3.0.0, especificaciones 300 y 400 reescritas, `README.md`,
+  `.env.example` y este registro actualizados.
+
 ## QA manual verificado
 
 Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
@@ -157,7 +199,8 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 ## Avisos de advisors
 
 - `auth_rls_initplan` y `function_search_path_mutable`: resueltos en
-  `20261112030000_harden_policy_and_function.sql`.
+  `20261111174752_harden_policy_and_function.sql` y
+  `20261111174801_harden_realtime_policy_jwt_subquery.sql`.
 - `rls_enabled_no_policy` (7 tablas de auth y servidor): intencionado. RLS
   activo sin policies y sin grants equivale a denegar a `anon` y
   `authenticated`; el acceso es solo server-side por `DATABASE_URL`.
@@ -167,6 +210,8 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 
 ## Límites conocidos
 
+- Los commits de la auditoría aún no se han publicado; `master` local está por
+  delante de `origin` hasta que se haga push y Vercel despliegue.
 - Preview no tiene `BETTER_AUTH_URL`, así que un deployment de preview arranca
   pero falla en el primer request de autenticación.
 - `NEXT_PUBLIC_APP_URL` sigue en Vercel sin uso en el código: pendiente de
@@ -198,3 +243,20 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 22. `5acb9c7` fix(db): harden realtime policy and trigger search_path
 23. `32f461d` feat(auth): accept extra trusted origins
 24. `29c827d` fix(tasks): keep due dates as date-only strings
+
+## Commits de la auditoría (12/11/2026)
+
+25. `fd9656e` chore(db): align migrations with the remote history
+26. `e8b75f9` fix(db): require the pooled URL and support CA validation
+27. `88b36bb` fix(security): cap request bodies and prefer the real client IP
+28. `bf3573d` fix(auth): disable direct sign-ups and persist Better Auth limits
+29. `f65f4f6` fix(security): emit a per-request nonce CSP and avoid redirect loops
+30. `9384496` fix(auth): sign out when the API rejects the session
+31. `06661ec` fix(auth): read reset tokens and Retry-After headers
+32. `8022f6e` fix(tasks): renumber the source column after moving a task
+33. `5c5129c` test: add a Vitest suite for critical pure functions
+34. `1ea5951` ci: run lint, types, tests and build on GitHub Actions
+35. `e508331` docs: replace the constitution with the server-first v3.0.0
+36. `897bdef` docs: rewrite the sync and Realtime specification
+37. `436d11f` docs: rewrite the Better Auth specification
+38. `a1e95ef` docs: refresh the README for the current architecture
