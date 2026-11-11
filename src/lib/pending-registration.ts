@@ -5,6 +5,7 @@ import { hashPassword } from "better-auth/crypto";
 import { auth } from "./auth";
 import { pool } from "./db";
 import { sendEmail, verificationCodeEmail } from "./email";
+import { requireSecret } from "./env";
 
 /**
  * Registros pendientes de verificación.
@@ -19,8 +20,6 @@ const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutos
 const MAX_ATTEMPTS = 5;
 const RESEND_COOLDOWN_SECONDS = 60;
 const PENDING_RETENTION_HOURS = 24;
-const UNVERIFIED_USER_TTL_HOURS = 24;
-const FALLBACK_SECRET = "hometable_better_auth_secret_key_32bytes_long!";
 
 interface PendingRow {
   id: string;
@@ -53,7 +52,7 @@ export interface PendingRegistrationInput {
 }
 
 export type RegisterPendingResult =
-  | { status: "sent" }
+  | { status: "sent"; pendingId: string }
   | { status: "email_taken" }
   | { status: "username_taken" }
   | { status: "delivery_failed"; error: unknown };
@@ -82,7 +81,7 @@ export function normalizeUsername(username: string): string {
 }
 
 function otpSecret(): string {
-  return process.env.BETTER_AUTH_SECRET || FALLBACK_SECRET;
+  return requireSecret("BETTER_AUTH_SECRET", 32);
 }
 
 function hashOtp(otp: string): string {
@@ -122,19 +121,6 @@ async function purgeStalePendingRegistrations(): Promise<void> {
     `delete from public.pending_registration
      where created_at < now() - ($1::int * interval '1 hour')`,
     [PENDING_RETENTION_HOURS],
-  );
-}
-
-/**
- * Elimina cuentas antiguas que quedaron sin verificar con el flujo anterior.
- * No toca cuentas verificadas ni registros recientes.
- */
-async function deleteStaleUnverifiedUsers(): Promise<void> {
-  await pool.query(
-    `delete from public."user"
-     where "emailVerified" = false
-       and "createdAt" < now() - ($1::int * interval '1 hour')`,
-    [UNVERIFIED_USER_TTL_HOURS],
   );
 }
 
@@ -253,7 +239,6 @@ export async function registerPending(
   const name = `${input.firstName.trim()} ${input.lastName.trim()}`.trim();
 
   await purgeStalePendingRegistrations();
-  await deleteStaleUnverifiedUsers();
 
   const conflict = await resolveUserConflicts(email, username);
   if (conflict) return { status: conflict };
@@ -271,11 +256,12 @@ export async function registerPending(
   );
 
   try {
-    await pool.query(
+    const { rows } = await pool.query<{ id: string }>(
       `insert into public.pending_registration
          (email, username, display_username, name, first_name, last_name,
           password_hash, otp_hash, otp_expires_at, attempts, sent_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, now())`,
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, now())
+       returning id`,
       [
         email,
         username,
@@ -288,6 +274,21 @@ export async function registerPending(
         expiresAt,
       ],
     );
+
+    const pendingId = rows[0]?.id;
+    if (!pendingId) throw new Error("No se pudo crear el registro pendiente.");
+
+    try {
+      const { subject, html } = verificationCodeEmail(input.firstName, otp);
+      await sendEmail({ to: email, subject, html });
+    } catch (error) {
+      // Si no se puede entregar el código, no dejamos un registro pendiente
+      // inútil: el usuario puede reintentar el formulario de inmediato.
+      await discardPendingRegistration(email);
+      return { status: "delivery_failed", error };
+    }
+
+    return { status: "sent", pendingId };
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
 
@@ -295,18 +296,6 @@ export async function registerPending(
     const retry = await resolveUserConflicts(email, username);
     return { status: retry ?? "email_taken" };
   }
-
-  try {
-    const { subject, html } = verificationCodeEmail(input.firstName, otp);
-    await sendEmail({ to: email, subject, html });
-  } catch (error) {
-    // Si no se puede entregar el código, no dejamos un registro pendiente
-    // inútil: el usuario puede reintentar el formulario de inmediato.
-    await discardPendingRegistration(email);
-    return { status: "delivery_failed", error };
-  }
-
-  return { status: "sent" };
 }
 
 /**
@@ -315,6 +304,7 @@ export async function registerPending(
 export async function verifyPendingRegistration(
   rawEmail: string,
   otp: string,
+  pendingId: string,
 ): Promise<VerifyPendingResult> {
   const email = normalizeEmail(rawEmail);
 
@@ -326,7 +316,7 @@ export async function verifyPendingRegistration(
   );
   const pending = rows[0];
 
-  if (!pending) return { status: "not_found" };
+  if (!pending || pending.id !== pendingId) return { status: "not_found" };
   if (pending.attempts >= MAX_ATTEMPTS) return { status: "too_many_attempts" };
 
   if (new Date(pending.otp_expires_at).getTime() <= Date.now()) {
@@ -411,7 +401,10 @@ export async function verifyPendingRegistration(
 /**
  * Genera y envía un código nuevo para un registro pendiente.
  */
-export async function resendPendingCode(rawEmail: string): Promise<ResendPendingResult> {
+export async function resendPendingCode(
+  rawEmail: string,
+  pendingId: string,
+): Promise<ResendPendingResult> {
   const email = normalizeEmail(rawEmail);
 
   await purgeStalePendingRegistrations();
@@ -422,7 +415,7 @@ export async function resendPendingCode(rawEmail: string): Promise<ResendPending
   );
   const pending = rows[0];
 
-  if (!pending) return { status: "not_found" };
+  if (!pending || pending.id !== pendingId) return { status: "not_found" };
 
   const elapsedSeconds = (Date.now() - new Date(pending.sent_at).getTime()) / 1000;
   if (elapsedSeconds < RESEND_COOLDOWN_SECONDS) {

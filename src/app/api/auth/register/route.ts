@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { registerPayloadSchema } from "@/lib/auth-validation";
+import { clientIp, readJsonBody, requireSameOrigin, jsonError } from "@/lib/http";
+import { setPendingCookie } from "@/lib/pending-cookie";
 import { registerPending } from "@/lib/pending-registration";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { verifyRecaptchaToken } from "@/lib/recaptcha";
 
 /**
@@ -10,22 +13,29 @@ import { verifyRecaptchaToken } from "@/lib/recaptcha";
  * el usuario confirma el OTP.
  */
 export async function POST(request: Request) {
-  let raw: unknown;
+  const originError = requireSameOrigin(request);
+  if (originError) return originError;
 
-  try {
-    raw = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Cuerpo de la petición inválido." }, { status: 400 });
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+
+  const parsed = registerPayloadSchema.safeParse(body.data);
+  if (!parsed.success) {
+    return jsonError(parsed.error.issues[0]?.message ?? "Datos inválidos.", 400);
   }
 
-  const parsed = registerPayloadSchema.safeParse(raw);
-
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    return NextResponse.json(
-      { error: issue?.message ?? "Datos de registro inválidos." },
-      { status: 400 },
-    );
+  try {
+    const limit = await checkRateLimit("register", clientIp(request));
+    if (!limit.allowed) {
+      return jsonError(
+        "Demasiados intentos. Espera unos minutos antes de volver a intentarlo.",
+        429,
+        { "Retry-After": String(limit.retryAfterSeconds) },
+      );
+    }
+  } catch (error) {
+    console.error("Rate limit no disponible:", error);
+    return jsonError("El registro no está disponible en este momento.", 503);
   }
 
   const { email, password, username, firstName, lastName, recaptchaToken } = parsed.data;
@@ -35,10 +45,7 @@ export async function POST(request: Request) {
   // saltar llamando directamente a la API de registro.
   const recaptchaOk = await verifyRecaptchaToken(recaptchaToken);
   if (!recaptchaOk) {
-    return NextResponse.json(
-      { error: "No pudimos verificar el reCAPTCHA. Inténtalo de nuevo." },
-      { status: 400 },
-    );
+    return jsonError("No pudimos verificar el reCAPTCHA. Inténtalo de nuevo.", 400);
   }
 
   try {
@@ -53,30 +60,29 @@ export async function POST(request: Request) {
     });
 
     switch (result.status) {
-      case "sent":
-        return NextResponse.json({ success: true, requiresEmailVerification: true });
+      case "sent": {
+        const response = NextResponse.json({
+          success: true,
+          requiresEmailVerification: true,
+        });
+        setPendingCookie(response, request, result.pendingId);
+        return response;
+      }
       case "email_taken":
-        return NextResponse.json({ error: "El correo ya está registrado." }, { status: 409 });
       case "username_taken":
-        return NextResponse.json(
-          { error: "El nombre de usuario ya está en uso." },
-          { status: 409 },
+        return jsonError(
+          "No pudimos completar el registro con esos datos. Prueba con otro correo o nombre de usuario.",
+          409,
         );
       case "delivery_failed":
         console.error("No se pudo enviar el código de verificación:", result.error);
-        return NextResponse.json(
-          {
-            error:
-              "No pudimos enviar el correo de verificación. Revisa la configuración de Resend e inténtalo de nuevo.",
-          },
-          { status: 502 },
+        return jsonError(
+          "No pudimos enviar el correo de verificación. Inténtalo de nuevo más tarde.",
+          502,
         );
     }
   } catch (error: unknown) {
     console.error("Error en registro:", error);
-    return NextResponse.json(
-      { error: "No pudimos completar el registro. Inténtalo de nuevo." },
-      { status: 500 },
-    );
+    return jsonError("No pudimos completar el registro. Inténtalo de nuevo.", 500);
   }
 }

@@ -1,82 +1,91 @@
 import { NextResponse } from "next/server";
 
 import { verifyEmailSchema } from "@/lib/auth-validation";
+import { clientIp, jsonError, readJsonBody, requireSameOrigin } from "@/lib/http";
+import { clearPendingCookie, readPendingId } from "@/lib/pending-cookie";
 import { verifyPendingRegistration } from "@/lib/pending-registration";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
  * Confirma el OTP de un registro pendiente y crea la cuenta real. No inicia
  * sesión: el usuario debe entrar con su contraseña después.
+ *
+ * El código solo es válido en el navegador que lo solicitó: el id del registro
+ * pendiente viaja en una cookie httpOnly firmada.
  */
 export async function POST(request: Request) {
-  let raw: unknown;
+  const originError = requireSameOrigin(request);
+  if (originError) return originError;
 
-  try {
-    raw = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Cuerpo de la petición inválido." }, { status: 400 });
+  const body = await readJsonBody(request);
+  if (!body.ok) return body.response;
+
+  const parsed = verifyEmailSchema.safeParse(body.data);
+  if (!parsed.success) {
+    return jsonError(parsed.error.issues[0]?.message ?? "Datos inválidos.", 400);
   }
 
-  const parsed = verifyEmailSchema.safeParse(raw);
+  try {
+    const limit = await checkRateLimit(
+      "verify",
+      clientIp(request),
+      parsed.data.email,
+    );
+    if (!limit.allowed) {
+      return jsonError(
+        "Demasiados intentos. Espera unos minutos antes de volver a intentarlo.",
+        429,
+        { "Retry-After": String(limit.retryAfterSeconds) },
+      );
+    }
+  } catch (error) {
+    console.error("Rate limit no disponible:", error);
+    return jsonError("La verificación no está disponible en este momento.", 503);
+  }
 
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    return NextResponse.json(
-      { error: issue?.message ?? "Datos de verificación inválidos." },
-      { status: 400 },
+  const pendingId = readPendingId(request);
+  if (!pendingId) {
+    return jsonError(
+      "No encontramos una verificación activa. Vuelve a completar el registro.",
+      400,
     );
   }
 
   try {
-    const result = await verifyPendingRegistration(parsed.data.email, parsed.data.otp);
+    const result = await verifyPendingRegistration(
+      parsed.data.email,
+      parsed.data.otp,
+      pendingId,
+    );
 
     switch (result.status) {
-      case "verified":
-        return NextResponse.json({ success: true });
+      case "verified": {
+        const response = NextResponse.json({ success: true });
+        clearPendingCookie(response, request);
+        return response;
+      }
       case "not_found":
-        return NextResponse.json(
-          {
-            error:
-              "No encontramos un registro pendiente con ese correo. Vuelve a completar el formulario de registro.",
-          },
-          { status: 404 },
-        );
+        return jsonError("Código incorrecto o expirado.", 400);
       case "expired":
-        return NextResponse.json(
-          { error: "El código expiró. Solicita uno nuevo." },
-          { status: 410 },
-        );
+        return jsonError("El código expiró. Solicita uno nuevo.", 410);
       case "invalid":
-        return NextResponse.json(
-          {
-            error:
-              result.attemptsLeft === 0
-                ? "Código incorrecto. Solicita un código nuevo."
-                : `Código incorrecto. Te quedan ${result.attemptsLeft} intentos.`,
-            attemptsLeft: result.attemptsLeft,
-          },
-          { status: 400 },
+        return jsonError(
+          result.attemptsLeft === 0
+            ? "Código incorrecto. Solicita un código nuevo."
+            : `Código incorrecto. Te quedan ${result.attemptsLeft} intentos.`,
+          400,
         );
       case "too_many_attempts":
-        return NextResponse.json(
-          { error: "Demasiados intentos. Solicita un código nuevo." },
-          { status: 429 },
-        );
+        return jsonError("Demasiados intentos. Solicita un código nuevo.", 429);
       case "email_taken":
-        return NextResponse.json(
-          { error: "El correo ya está registrado. Inicia sesión." },
-          { status: 409 },
-        );
       case "username_taken":
-        return NextResponse.json(
-          { error: "El nombre de usuario ya está en uso. Regístrate con otro." },
-          { status: 409 },
+        return jsonError(
+          "No pudimos crear la cuenta con esos datos. Regístrate con otro correo o nombre de usuario.",
+          409,
         );
     }
   } catch (error: unknown) {
     console.error("Error al verificar el correo:", error);
-    return NextResponse.json(
-      { error: "No pudimos verificar el correo. Inténtalo de nuevo." },
-      { status: 500 },
-    );
+    return jsonError("No pudimos verificar el correo. Inténtalo de nuevo.", 500);
   }
 }

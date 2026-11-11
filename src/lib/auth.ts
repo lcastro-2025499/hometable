@@ -3,15 +3,35 @@ import { username } from "better-auth/plugins";
 
 import { pool } from "./db";
 import { passwordResetEmail, sendEmail } from "./email";
+import { requireEnv, requireSecret } from "./env";
 
-// Resolve base URL: explicit env var, else the public app URL, else Vercel URL, else localhost
-const baseURL =
-  process.env.BETTER_AUTH_URL ||
-  process.env.NEXT_PUBLIC_APP_URL ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+/**
+ * URL canónica de la aplicación. Es la única fuente para cookies, enlaces de
+ * correo y orígenes de confianza: no se aceptan previews ni localhost como
+ * respaldo silencioso.
+ */
+function resolveBaseUrl(): string {
+  const configured = requireEnv("BETTER_AUTH_URL").trim().replace(/\/+$/, "");
+  const url = new URL(configured);
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("BETTER_AUTH_URL debe usar http o https.");
+  }
+
+  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new Error("BETTER_AUTH_URL debe usar HTTPS en producción.");
+  }
+
+  return url.origin;
+}
+
+const baseURL = resolveBaseUrl();
 
 export const auth = betterAuth({
   database: pool,
+  baseURL,
+  secret: requireSecret("BETTER_AUTH_SECRET", 32),
+  trustedOrigins: [baseURL],
   emailAndPassword: {
     enabled: true,
     // Ninguna cuenta puede iniciar sesión hasta confirmar su correo.
@@ -50,13 +70,11 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7, // 7 días
     updateAge: 60 * 60 * 24, // 1 día
   },
-  // Cookies: secure solo cuando servimos por HTTPS
   cookiePrefix: "better-auth",
   cookiePath: "/",
   cookieAttributes: {
+    // `baseURL` es canónica y en producción se exige HTTPS arriba.
     secure: baseURL.startsWith("https://"),
     sameSite: "lax",
   },
-  secret: process.env.BETTER_AUTH_SECRET || "hometable_better_auth_secret_key_32bytes_long!",
-  baseURL,
 });

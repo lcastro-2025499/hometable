@@ -21,11 +21,11 @@ export default function RegisterPage() {
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
   const [recaptchaKey, setRecaptchaKey] = useState(0);
 
-  const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || "6LdjaxguAAAAACh5fP3_qDgLFAvcdzvTTc5Cs4-l";
+  const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
 
   const form = useForm<RegisterSchema>({
     resolver: zodResolver(registerSchema),
-    mode: "onSubmit", // Solo validar al enviar el formulario
+    mode: "onChange",
     defaultValues: {
       firstName: "",
       lastName: "",
@@ -36,11 +36,12 @@ export default function RegisterPage() {
     },
   });
 
-  const { errors } = form.formState;
+  const { errors, isValid } = form.formState;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const isButtonDisabled = !recaptchaToken || !!errors.confirmPassword || isSubmitting;
+  const isButtonDisabled =
+    !siteKey || !recaptchaToken || !isValid || isSubmitting;
 
   const onSubmit = async (values: RegisterSchema) => {
     if (!recaptchaToken) {
@@ -207,12 +208,19 @@ export default function RegisterPage() {
                 </Field>
 
                 <div className="flex justify-center pt-2">
-                  <ReCAPTCHA
-                    key={recaptchaKey}
-                    sitekey={siteKey}
-                    onChange={(token) => setRecaptchaToken(token)}
-                    onExpired={() => setRecaptchaToken(null)}
-                  />
+                  {siteKey ? (
+                    <ReCAPTCHA
+                      key={recaptchaKey}
+                      sitekey={siteKey}
+                      onChange={(token) => setRecaptchaToken(token)}
+                      onExpired={() => setRecaptchaToken(null)}
+                    />
+                  ) : (
+                    <p className="text-sm text-destructive">
+                      La verificación reCAPTCHA no está configurada. Contacta al
+                      administrador.
+                    </p>
+                  )}
                 </div>
               </FieldGroup>
 
