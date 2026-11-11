@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -21,7 +22,15 @@ export const metadata: Metadata = {
     "Organiza tus tareas en un tablero Kanban con prioridades, fechas límite y etiquetas. Tus datos se guardan en tu cuenta y se sincronizan entre dispositivos.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// El layout lee `headers()` para el nonce de la CSP: todas las rutas se
+// renderizan por petición en lugar de prerenderizarse en el build.
+export const instant = false;
+
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // `proxy.ts` genera un nonce por petición. Next lo aplica a sus scripts y
+  // next-themes lo necesita para su script de inicialización del tema.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html
       lang="es"
@@ -34,6 +43,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
+          nonce={nonce}
         >
           <TooltipProvider>
             {children}

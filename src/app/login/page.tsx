@@ -15,11 +15,14 @@ import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field
 import { Checkbox } from "@/components/ui/checkbox";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signIn } from "@/lib/auth-client";
+import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authenticated";
 import { loginSchema, type LoginSchema } from "@/lib/auth-validation";
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+
+  useRedirectIfAuthenticated();
 
   useEffect(() => {
     if (typeof window === "undefined") return;

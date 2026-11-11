@@ -14,12 +14,15 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useRedirectIfAuthenticated } from "@/hooks/use-redirect-if-authenticated";
 import { registerSchema, type RegisterSchema } from "@/lib/auth-validation";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
   const [recaptchaKey, setRecaptchaKey] = useState(0);
+
+  useRedirectIfAuthenticated();
 
   const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
 
