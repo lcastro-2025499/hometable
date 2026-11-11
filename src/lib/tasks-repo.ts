@@ -1,6 +1,13 @@
 import { z } from "zod";
 
+import {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_TAGS,
+  MAX_TAG_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "./constants";
 import { pool } from "./db";
+import { isDateOnly } from "./task-utils";
 import { rowToTask } from "./task-mapper";
 import { TASK_PRIORITIES, TASK_STATUSES, type Task } from "./types";
 
@@ -12,19 +19,28 @@ import { TASK_PRIORITIES, TASK_STATUSES, type Task } from "./types";
 
 const MAX_BATCH_SIZE = 500;
 
-const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
-
 const taskPayloadSchema = z.object({
   id: z.string().uuid(),
-  title: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(2000).nullish(),
+  title: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
+  description: z
+    .string()
+    .trim()
+    .max(MAX_DESCRIPTION_LENGTH)
+    .nullish(),
   status: z.enum(TASK_STATUSES),
   priority: z.enum(TASK_PRIORITIES),
-  dueDate: z.string().regex(dateOnly).nullish(),
-  tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  dueDate: z.string().refine(isDateOnly, "dueDate inválido.").nullish(),
+  tags: z
+    .array(z.string().trim().min(1).max(MAX_TAG_LENGTH))
+    .max(MAX_TAGS)
+    .default([]),
   order: z.number().int().min(0).max(1_000_000),
-  createdAt: z.string().refine((value) => !Number.isNaN(Date.parse(value)), "createdAt inválido."),
-  updatedAt: z.string().refine((value) => !Number.isNaN(Date.parse(value)), "updatedAt inválido."),
+  createdAt: z
+    .string()
+    .refine((value) => !Number.isNaN(Date.parse(value)), "createdAt inválido."),
+  updatedAt: z
+    .string()
+    .refine((value) => !Number.isNaN(Date.parse(value)), "updatedAt inválido."),
   completedAt: z
     .string()
     .refine((value) => !Number.isNaN(Date.parse(value)), "completedAt inválido.")
@@ -56,12 +72,13 @@ function parseTasks(input: unknown): { tasks: TaskPayload[]; rejected: number } 
 
 type Queryable = Pick<typeof pool, "query">;
 
+/** Devuelve cuántas filas se escribieron realmente. */
 async function insertTasks(
   client: Queryable,
   userId: string,
   tasks: TaskPayload[],
-): Promise<void> {
-  if (tasks.length === 0) return;
+): Promise<number> {
+  if (tasks.length === 0) return 0;
 
   const columns = 12;
   const values: unknown[] = [];
@@ -108,9 +125,11 @@ async function insertTasks(
       updated_at = excluded.updated_at,
       completed_at = excluded.completed_at
     where public.tasks.owner_id = excluded.owner_id
+    returning id
   `;
 
-  await client.query(sql, values);
+  const result = await client.query(sql, values);
+  return result.rowCount ?? 0;
 }
 
 export async function listTasks(userId: string): Promise<Task[]> {
@@ -124,11 +143,15 @@ export async function listTasks(userId: string): Promise<Task[]> {
 
 export async function upsertTasks(userId: string, input: unknown): Promise<WriteResult> {
   const { tasks, rejected } = parseTasks(input);
-  await insertTasks(pool, userId, tasks);
-  return { accepted: tasks.length, rejected };
+  const written = await insertTasks(pool, userId, tasks);
+
+  return { accepted: written, rejected: rejected + (tasks.length - written) };
 }
 
-export async function deleteTasksByIds(userId: string, ids: unknown): Promise<{ deleted: number }> {
+export async function deleteTasksByIds(
+  userId: string,
+  ids: unknown,
+): Promise<{ deleted: number }> {
   const parsed = z.array(z.string().uuid()).max(MAX_BATCH_SIZE).safeParse(ids);
   if (!parsed.success || parsed.data.length === 0) return { deleted: 0 };
 
@@ -138,33 +161,4 @@ export async function deleteTasksByIds(userId: string, ids: unknown): Promise<{ 
   );
 
   return { deleted: result.rowCount ?? 0 };
-}
-
-export async function replaceTasks(userId: string, input: unknown): Promise<WriteResult> {
-  const { tasks, rejected } = parseTasks(input);
-  const client = await pool.connect();
-
-  try {
-    await client.query("begin");
-
-    if (tasks.length === 0) {
-      await client.query(`delete from public.tasks where owner_id = $1`, [userId]);
-    } else {
-      const ids = tasks.map((task) => task.id);
-      await client.query(
-        `delete from public.tasks where owner_id = $1 and id <> all($2::uuid[])`,
-        [userId, ids],
-      );
-      await insertTasks(client, userId, tasks);
-    }
-
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  return { accepted: tasks.length, rejected };
 }

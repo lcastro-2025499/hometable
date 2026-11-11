@@ -1,141 +1,169 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import { useTaskStore } from '@/store/task-store';
-import { fetchRemoteTasks, replaceAllTasks } from '@/lib/tasks-sync';
-import { reconcileTasks } from '@/lib/task-sync';
-import { authClient } from '@/lib/auth-client';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+
+import { authClient } from "@/lib/auth-client";
+import { fetchRemoteTasks, setSyncFailureHandler } from "@/lib/tasks-sync";
+import { useTaskStore } from "@/store/task-store";
 
 export type SyncStatus =
-  | 'local'
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
-  | 'error';
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Error de sincronización desconocido.';
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return "El servidor tardó demasiado en responder.";
+  }
+  return "No se pudo conectar con el servidor.";
 }
 
 export interface TasksSyncResult {
   status: SyncStatus;
   lastSync: string | null;
   error: string | null;
-  isDirty: boolean;
-  saveChanges: () => Promise<boolean>;
+  isLoading: boolean;
+  refresh: () => Promise<void>;
 }
 
+interface SyncState {
+  status: SyncStatus;
+  lastSync: string | null;
+  error: string | null;
+  isLoading: boolean;
+}
+
+const initialState: SyncState = {
+  status: "connecting",
+  lastSync: null,
+  error: null,
+  isLoading: true,
+};
+
 export function useTasksSync(): TasksSyncResult {
-  const { data: session } = authClient.useSession();
+  const { data: session, isPending } = authClient.useSession();
   const userId = session?.user?.id;
   const setUserId = useTaskStore((state) => state.setUserId);
-  const tasks = useTaskStore((state) => state.tasks);
-  const isDirty = useTaskStore((state) => state.isDirty);
-  const markSaved = useTaskStore((state) => state.markSaved);
-  const syncFromSupabase = useTaskStore((state) => state.syncFromSupabase);
+  const replaceFromServer = useTaskStore((state) => state.replaceFromServer);
+
+  const [state, setState] = useState<SyncState>(initialState);
+  const inFlight = useRef(false);
+  const userIdRef = useRef<string | undefined>(userId);
+  userIdRef.current = userId;
 
   useEffect(() => {
     setUserId(userId);
   }, [userId, setUserId]);
 
-  const [state, setState] = useState<{
-    status: SyncStatus;
-    lastSync: string | null;
-    error: string | null;
-  }>(() => ({
-    status: 'connecting',
-    lastSync: null,
-    error: null,
-  }));
+  const refresh = useCallback(async () => {
+    const currentUserId = userIdRef.current;
 
-  const refresh = useCallback(async (silent = false) => {
-    if (!userId) {
-      setState({ status: 'local', lastSync: null, error: null });
+    if (!currentUserId) {
+      setState({
+        status: "error",
+        lastSync: null,
+        error: "No hay una sesión activa.",
+        isLoading: false,
+      });
       return;
     }
 
-    if (!silent) {
-      setState((current) => ({ ...current, status: 'connecting', error: null }));
-    }
+    if (inFlight.current) return;
+    inFlight.current = true;
 
     try {
       const remote = await fetchRemoteTasks();
-      const local = useTaskStore.getState().tasks;
-      const { merged } = reconcileTasks(local, remote);
-
-      syncFromSupabase(merged);
-
+      replaceFromServer(remote);
       setState({
-        status: 'connected',
+        status: "connected",
         lastSync: new Date().toISOString(),
         error: null,
+        isLoading: false,
       });
     } catch (error) {
-      const online = typeof navigator === 'undefined' || navigator.onLine;
+      const online = typeof navigator === "undefined" || navigator.onLine;
       setState((current) => ({
         ...current,
-        status: online ? 'error' : 'disconnected',
-        error: silent ? current.error : errorMessage(error),
+        status: online ? "error" : "disconnected",
+        error: errorMessage(error),
+        isLoading: false,
       }));
+    } finally {
+      inFlight.current = false;
     }
-  }, [userId, syncFromSupabase]);
+  }, [replaceFromServer]);
 
+  // Carga inicial y cambio de cuenta.
   useEffect(() => {
+    if (isPending) return;
+
+    if (!userId) {
+      setState({
+        status: "error",
+        lastSync: null,
+        error: "No hay una sesión activa.",
+        isLoading: false,
+      });
+      return;
+    }
+
+    setState((current) => ({
+      ...current,
+      status: current.lastSync ? current.status : "connecting",
+      error: null,
+      isLoading: current.lastSync === null,
+    }));
     void refresh();
+  }, [userId, isPending, refresh]);
+
+  // Cualquier escritura fallida recarga el tablero desde el servidor y avisa.
+  useEffect(() => {
+    setSyncFailureHandler((message) => {
+      toast.error(message);
+      void refresh();
+    });
+
+    return () => setSyncFailureHandler(null);
   }, [refresh]);
 
-  // Sincronización automática de entrada (pull) cada 30s
+  // Respaldo por sondeo cuando Realtime no está disponible.
   useEffect(() => {
     if (!userId) return;
 
     const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void refresh(true);
+      if (document.visibilityState === "visible") {
+        void refresh();
       }
-    }, 30000);
+    }, 30_000);
 
     return () => window.clearInterval(interval);
   }, [userId, refresh]);
 
-  // Advertencia de cambios sin guardar
+  // Recuperación al volver la conexión o al enfocar la pestaña.
   useEffect(() => {
-    if (!isDirty) return;
+    if (!userId) return;
 
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      return (e.returnValue = '');
+    const handleOnline = () => void refresh();
+    const handleFocus = () => {
+      if (document.visibilityState === "visible") void refresh();
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isDirty]);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("focus", handleFocus);
 
-  const saveChanges = useCallback(async () => {
-    if (!userId) return false;
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [userId, refresh]);
 
-    setState((current) => ({ ...current, status: 'connecting', error: null }));
-
-    try {
-      const success = await replaceAllTasks(tasks, userId);
-      if (success) {
-        markSaved();
-        setState({
-          status: 'connected',
-          lastSync: new Date().toISOString(),
-          error: null,
-        });
-        return true;
-      }
-      throw new Error('Fallo al guardar');
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        status: 'error',
-        error: errorMessage(error),
-      }));
-      return false;
-    }
-  }, [userId, tasks, markSaved]);
-
-  return { ...state, isDirty, saveChanges };
+  return {
+    status: state.status,
+    lastSync: state.lastSync,
+    error: state.error,
+    isLoading: state.isLoading,
+    refresh,
+  };
 }

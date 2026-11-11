@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -24,8 +24,8 @@ import { TaskDialog } from "@/components/tasks/task-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 import { ConnectionStatus } from "@/components/ui/connection-status";
-import { useHydrated } from "@/hooks/use-hydrated";
-import { STATUS_META, STORAGE_KEY, TASK_STATUSES } from "@/lib/constants";
+import { useTasksSync } from "@/hooks/use-tasks-sync";
+import { STATUS_META, TASK_STATUSES } from "@/lib/constants";
 import {
   byOrder,
   filterTasks,
@@ -78,8 +78,8 @@ const announcements: Announcements = {
 };
 
 export function TaskBoard() {
+  const { status, isLoading } = useTasksSync();
   useTasksRealtime();
-  const hydrated = useHydrated();
   const tasks = useTaskStore((state) => state.tasks);
   const setTasks = useTaskStore((state) => state.setTasks);
   const deleteTask = useTaskStore((state) => state.deleteTask);
@@ -89,7 +89,6 @@ export function TaskBoard() {
   const moveTask = useTaskStore((state) => state.moveTask);
   const toggleComplete = useTaskStore((state) => state.toggleComplete);
   const clearCompleted = useTaskStore((state) => state.clearCompleted);
-  const loadExamples = useTaskStore((state) => state.loadExamples);
 
   const [filters, setFilters] = useState<TaskFilters>(initialFilters);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -98,17 +97,6 @@ export function TaskBoard() {
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
   const [draft, setDraft] = useState<Task[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY) {
-        void useTaskStore.persist.rehydrate();
-      }
-    };
-
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -122,11 +110,8 @@ export function TaskBoard() {
   const displayedTasks = draft ?? tasks;
 
   const visibleTasks = useMemo(
-    () =>
-      hydrated
-        ? sortTasks(filterTasks(displayedTasks, filters), filters.sort)
-        : [],
-    [hydrated, displayedTasks, filters],
+    () => sortTasks(filterTasks(displayedTasks, filters), filters.sort),
+    [displayedTasks, filters],
   );
   const grouped = useMemo(() => groupTasks(visibleTasks), [visibleTasks]);
   const totalsByStatus = useMemo(
@@ -307,7 +292,7 @@ export function TaskBoard() {
             </div>
           </div>
           <BoardActions onCreate={() => openCreate("todo")} />
-          <ConnectionStatus />
+          <ConnectionStatus status={status} />
           <div className="flex items-center gap-1">
             <UserMenu />
             <ThemeToggle />
@@ -316,7 +301,7 @@ export function TaskBoard() {
       </header>
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 sm:px-6">
-        {!hydrated ? (
+        {isLoading && tasks.length === 0 ? (
           <BoardSkeleton />
         ) : (
           <div className="space-y-5">
@@ -332,13 +317,7 @@ export function TaskBoard() {
             />
 
             {tasks.length === 0 ? (
-              <EmptyBoard
-                onCreate={() => openCreate("todo")}
-                onLoadExamples={() => {
-                  loadExamples();
-                  toast.success("Datos de ejemplo cargados");
-                }}
-              />
+              <EmptyBoard onCreate={() => openCreate("todo")} />
             ) : null}
 
             <DndContext

@@ -20,6 +20,12 @@ export function toDateOnly(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/** Comprueba que el texto es una fecha real (rechaza 2026-02-31 o 2026-13-01). */
+export function isDateOnly(value: string): boolean {
+  const date = parseDateOnly(value);
+  return Boolean(date && toDateOnly(date) === value);
+}
+
 export function normalizeText(value: string): string {
   return value
     .normalize("NFD")

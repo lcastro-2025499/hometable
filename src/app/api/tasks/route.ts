@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth-server";
-import { deleteTasksByIds, listTasks, replaceTasks, upsertTasks } from "@/lib/tasks-repo";
+import { deleteTasksByIds, listTasks, upsertTasks } from "@/lib/tasks-repo";
 
 function unauthorized(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -71,24 +71,6 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Error guardando tareas:", error);
     return unauthorized("No se pudieron guardar las tareas.", 500);
-  }
-}
-
-export async function PUT(request: Request) {
-  if (!isSameOrigin(request)) return unauthorized("Origen no permitido.", 403);
-
-  const auth = await requireUser();
-  if ("response" in auth) return auth.response;
-
-  const body = (await readJson(request)) as { tasks?: unknown } | null;
-  if (!body || !("tasks" in body)) return unauthorized("Cuerpo inválido.", 400);
-
-  try {
-    const result = await replaceTasks(auth.userId, body.tasks);
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error("Error reemplazando tareas:", error);
-    return unauthorized("No se pudo reemplazar el tablero.", 500);
   }
 }
 

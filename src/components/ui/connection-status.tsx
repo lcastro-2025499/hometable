@@ -1,42 +1,36 @@
-import { CloudCheck, CloudOff, TriangleAlert } from 'lucide-react';
+import { CloudCheck, CloudOff, TriangleAlert } from "lucide-react";
 
-import { useTasksSync, type SyncStatus } from '@/hooks/use-tasks-sync';
+import type { SyncStatus } from "@/hooks/use-tasks-sync";
 
 const STATUS_CONFIG: Record<
   SyncStatus,
   { label: string; icon: React.ReactNode }
 > = {
-  local: {
-    label: 'Modo local',
+  connecting: {
+    label: "Conectando…",
     icon: <CloudOff className="size-3 text-muted-foreground" />,
   },
-  connecting: {
-    label: 'Sincronizado con Hometable',
-    icon: <CloudCheck className="size-3 text-emerald-500" />,
-  },
   connected: {
-    label: 'Sincronizado con Hometable',
+    label: "Sincronizado",
     icon: <CloudCheck className="size-3 text-emerald-500" />,
   },
   disconnected: {
-    label: 'Sin conexión',
+    label: "Sin conexión",
     icon: <CloudOff className="size-3 text-zinc-500" />,
   },
   error: {
-    label: 'Error de conexión',
+    label: "Error de conexión",
     icon: <TriangleAlert className="size-3 text-red-500" />,
   },
 };
 
-export function ConnectionStatus() {
-  const { status } = useTasksSync();
-
+export function ConnectionStatus({ status }: { status: SyncStatus }) {
   const config = STATUS_CONFIG[status];
 
   return (
-    <div className="flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs">
+    <div className="flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs text-muted-foreground">
       {config.icon}
-      <span className="text-muted-foreground">{config.label}</span>
+      <span className="hidden sm:inline">{config.label}</span>
     </div>
   );
 }
