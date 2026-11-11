@@ -121,6 +121,18 @@ verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
 - [x] Policy verificada como `authenticated` con `request.jwt.claims`
   simulado: solo devuelve las filas del `sub`.
 
+### Dominio propio
+
+- [x] `hometable.luuiscastro.me` verificado en Vercel (CNAME a Vercel y TLS
+  válido) y sirviendo producción.
+- [x] `BETTER_AUTH_URL` = `https://hometable.luuiscastro.me` y
+  `BETTER_AUTH_TRUSTED_ORIGINS` = `https://hometable-tasks.vercel.app`.
+- [x] `resolveTrustedOrigins` acepta la lista extra sin cambiar el canónico;
+  los enlaces de correo y las cookies siguen saliendo del dominio propio.
+- [x] Ambos orígenes inician sesión (401 `INVALID_EMAIL_OR_PASSWORD` en vez de
+  403 `INVALID_ORIGIN`) y un origen ajeno sigue rechazado con 403.
+- [x] Dominio añadido a la allowlist de reCAPTCHA.
+
 ## QA manual verificado
 
 Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
@@ -175,3 +187,4 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 20. `5c71676` docs: complete the session commit list
 21. `c443caa` fix(realtime): retry when the token cannot be issued
 22. `5acb9c7` fix(db): harden realtime policy and trigger search_path
+23. `32f461d` feat(auth): accept extra trusted origins
