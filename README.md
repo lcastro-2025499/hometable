@@ -45,6 +45,7 @@ la misma cuenta.
 | Better Auth + `pg` | 1.x / 8.x |
 | Supabase JS (solo Realtime) | 2.x |
 | Resend (correo transaccional) | 6.x |
+| Vitest (pruebas unitarias) | 3.x |
 
 ## Empezar
 
@@ -67,7 +68,8 @@ Cada variable está documentada con más detalle en [`.env.example`](.env.exampl
 | Variable | Ámbito | Obligatoria | Para qué |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | Secreta · servidor | Sí | Pooler de Supabase (puerto 6543) usado por Better Auth y `/api/tasks`. |
-| `DIRECT_URL` | Secreta · servidor | No | Conexión directa de respaldo (puerto 5432) para migraciones. |
+| `DIRECT_URL` | Secreta · servidor | No | Conexión directa (puerto 5432) para migraciones y mantenimiento. En producción no se usa como respaldo de `DATABASE_URL`; solo en local. |
+| `SUPABASE_DB_CA_CERT` | Secreta · servidor | No (recomendada) | CA del proyecto para validar la cadena TLS. Sin ella se cifra sin validar la cadena (`SELF_SIGNED_CERT_IN_CHAIN`). |
 | `BETTER_AUTH_SECRET` | Secreta · servidor | Sí | Firma de sesiones y de la cookie del registro pendiente (32+ caracteres). |
 | `BETTER_AUTH_URL` | Servidor | Sí | Origen canónico para cookies, enlaces de correo y orígenes de confianza. HTTPS en producción. |
 | `BETTER_AUTH_TRUSTED_ORIGINS` | Servidor | No | Orígenes extra aceptados (separados por comas), por ejemplo el dominio `vercel.app`. |
@@ -89,13 +91,24 @@ o desde el SQL Editor:
 
 | Migración | Contenido |
 | --- | --- |
-| `20261109000000_align_tasks_schema.sql` | Tabla `tasks`, trigger de `updated_at` e índices base. |
-| `20261109010000_better_auth_and_tasks_owner.sql` | Tablas de Better Auth y columna `owner_id`. |
-| `20261110000000_lock_down_tasks.sql` | RLS y revocación de grants de `anon`/`authenticated`. |
-| `20261111000000_pending_registrations.sql` | Registros pendientes de verificación. |
-| `20261112000000_realtime_owner_read.sql` | Lectura Realtime solo de las tareas propias. |
-| `20261112010000_auth_rate_limit.sql` | Contadores de rate limit de autenticación. |
-| `20261112020000_tasks_owner_indexes.sql` | Índices `(owner_id, status, order)` y `(owner_id, created_at)`. |
+| `20261109151132_align_tasks_schema_and_realtime.sql` | Tabla `tasks`, trigger de `updated_at`, índices base y publicación Realtime. |
+| `20261109151500_better_auth_tables.sql` | Tablas de Better Auth (`user`, `session`, `account`, `verification`), `board` y columna `owner_id`. |
+| `20261109152043_grant_tasks_api_privileges.sql` | Grants históricos de PostgREST sobre `tasks`. |
+| `20261109152450_make_tasks_migration_reproducible.sql` | Guardas idempotentes del esquema. |
+| `20261110161929_enable_rls_auth_tables.sql` | RLS en las tablas de Better Auth y de identidad. |
+| `20261110171312_lock_down_tasks.sql` | RLS y revocación de grants de `anon`/`authenticated`. |
+| `20261110200442_pending_registrations.sql` | Registros pendientes de verificación con OTP hasheado. |
+| `20261111161842_realtime_owner_read.sql` | Lectura Realtime solo de las tareas propias. |
+| `20261111162025_auth_rate_limit.sql` | Contadores persistentes de rate limit. |
+| `20261111162255_tasks_owner_indexes.sql` | Índices `(owner_id, status, order)` y `(owner_id, created_at)`. |
+| `20261111174752_harden_policy_and_function.sql` | `auth.jwt()` en subconsulta y `search_path` fijo en el trigger. |
+| `20261111174801_harden_realtime_policy_jwt_subquery.sql` | Misma policy endurecida, idempotente. |
+| `20261112040000_tasks_owner_not_null_and_board_index.sql` | `owner_id NOT NULL` e índice `idx_board_owner_id`. |
+
+Los nombres usan las mismas versiones que el historial remoto de Supabase y se
+aplican en orden desde un proyecto vacío. No apliques DDL desde el panel sin
+crear antes el archivo local correspondiente: eso reintroduce divergencia entre el
+repositorio y el proyecto.
 
 ## Arquitectura
 
@@ -122,43 +135,62 @@ Navegador ──POST/DELETE──▶ /api/tasks ──SQL parametrizado──▶
   sincronizar al suscribirse.
 - El tema claro/oscuro es la única preferencia que vive en `localStorage`
   (gestionada por `next-themes`).
+- La CSP se genera con un nonce distinto por petición en `src/proxy.ts` y el
+  layout la lee con `headers()`. Por eso todas las rutas se renderizan por
+  petición (`export const instant = false` en `src/app/layout.tsx`); es el
+  comportamiento esperado, no un fallo de caché.
 
 ### Seguridad
 
 - **Autenticación obligatoria** con Better Auth y verificación de correo previa
   al primer inicio de sesión.
+- **Solo un camino de alta**: `disableSignUp: true` elimina
+  `POST /api/auth/sign-up/email`; la única vía es `/api/auth/register`, que exige
+  reCAPTCHA y crea la cuenta solo al confirmar el OTP.
 - **Registro diferido**: la cuenta real solo se crea cuando el OTP de 6 dígitos
   es correcto. Mientras tanto se guarda un registro pendiente con la contraseña
   y el OTP ya hasheados.
 - El OTP está vinculado al navegador mediante una cookie `httpOnly` firmada con
   HMAC; caduca a los 10 minutos y admite 5 intentos.
-- **Rate limit en Postgres** para registro, verificación y reenvío. Las
-  respuestas de registro y reenvío son genéricas para no enumerar correos.
+- **Rate limit en Postgres** para registro, verificación y reenvío, compartido
+  entre instancias serverless y usado también como almacenamiento de Better Auth.
+  Las respuestas de registro y reenvío son genéricas para no enumerar correos.
 - Las rutas de escritura exigen mismo origen y derivan `owner_id` de la sesión
   (nunca del cuerpo de la petición).
 - `tasks` tiene RLS activo y concede a `authenticated` únicamente `SELECT` de las
   filas cuyo `owner_id` coincide con el claim `sub` del JWT.
-- Cabeceras de seguridad: CSP con allowlist de reCAPTCHA y Supabase,
-  `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
-  `Permissions-Policy`, HSTS en producción y `poweredByHeader: false`.
+- `src/proxy.ts` (convención de Next.js 16) protege las rutas privadas
+  comprobando la presencia de la cookie y emite una **CSP con nonce por
+  petición**; el layout la lee con `headers()`, por lo que todas las rutas se
+  renderizan por petición. Las páginas de servidor validan la sesión real con
+  `getSession()`.
+- Cabeceras de seguridad: CSP con allowlist de reCAPTCHA y Supabase (incluido
+  `wss://*.supabase.co`), `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`, `Permissions-Policy`, HSTS en producción y
+  `poweredByHeader: false`.
 - Ningún secreto se expone al cliente: solo las variables `NEXT_PUBLIC_*`
   llegan al navegador. `.env.local` está fuera de git.
 
 ## Scripts y puertas de calidad
 
 ```bash
-pnpm dev      # servidor de desarrollo
-pnpm build    # compilación de producción
-pnpm start    # servidor de producción (requiere pnpm build)
-pnpm lint     # ESLint
+pnpm dev         # servidor de desarrollo
+pnpm build       # compilación de producción
+pnpm start       # servidor de producción (requiere pnpm build)
+pnpm lint        # ESLint
+pnpm test        # Vitest (46 pruebas)
+pnpm test:watch  # Vitest en modo watch
 
 pnpm exec next typegen
 pnpm exec tsc --noEmit
 ```
 
 Antes de integrar, ejecuta `pnpm lint`, `pnpm exec next typegen` +
-`pnpm exec tsc --noEmit`, `pnpm build` y el QA manual descrito en el plan de la
-funcionalidad.
+`pnpm exec tsc --noEmit`, `pnpm test`, `pnpm build` y el QA manual descrito en el
+plan de la funcionalidad. La CI de
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) ejecuta las cinco puertas
+automatizadas en cada push a `master` y en cada pull request, con variables
+ficticias y sin conectarse a Supabase.
 
 ## Spec-Driven Development (Spec Kit)
 
@@ -214,8 +246,9 @@ del proyecto debe ser `hometable-tasks` para conservar el subdominio.
 
 ```text
 src/
+  proxy.ts                     # protección de rutas + CSP con nonce
   app/
-    layout.tsx                 # tema, toasts, tooltips y metadatos
+    layout.tsx                 # tema, toasts, tooltips, metadatos y nonce
     page.tsx                   # exige sesión y monta el tablero
     api/
       auth/register/           # registro pendiente + reCAPTCHA + rate limit
@@ -231,12 +264,13 @@ src/
     ui/                        # componentes shadcn + connection-status
   hooks/
     use-hydrated.ts            # evita desajustes con preferencias de UI
+    use-redirect-if-authenticated.ts # redirección solo con sesión confirmada
     use-tasks-sync.ts          # carga, sondeo, foco/online y recuperación
     use-tasks-realtime.ts      # canal autenticado y mapeo de eventos
   lib/
     auth.ts / auth-client.ts   # configuración de Better Auth
     auth-server.ts             # lectura de sesión en el servidor
-    db.ts                      # pool único de PostgreSQL
+    db.ts                      # pool único de PostgreSQL y TLS
     http.ts                    # mismo origen, JSON, IP y HTTPS
     rate-limit.ts              # contadores en public.auth_rate_limit
     pending-cookie.ts          # cookie firmada del registro pendiente
@@ -249,8 +283,11 @@ src/
     validation.ts              # esquemas Zod del formulario de tarea
   store/
     task-store.ts              # estado global de tareas (sin persistencia)
+tests/                         # Vitest: utilidades, validación, mapeo y HTTP
 supabase/
   migrations/                  # esquema, RLS, índices, rate limit y Realtime
+vitest.config.ts               # alias @/* y entorno node
+.github/workflows/ci.yml       # lint, typegen, tipos, tests y build
 ```
 
 ## Modelo de tarea
