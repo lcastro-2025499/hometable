@@ -4,6 +4,7 @@ import { username } from "better-auth/plugins";
 import { pool } from "./db";
 import { passwordResetEmail, sendEmail } from "./email";
 import { requireEnv, requireSecret } from "./env";
+import { consumeRateLimit } from "./rate-limit";
 
 /**
  * URL canónica de la aplicación. Es la única fuente para cookies, enlaces de
@@ -75,6 +76,10 @@ export const auth = betterAuth({
   trustedOrigins: resolveTrustedOrigins(baseURL),
   emailAndPassword: {
     enabled: true,
+    // El único camino de alta es /api/auth/register: valida reCAPTCHA y crea
+    // la cuenta solo tras verificar el OTP. Sin esta opción, Better Auth
+    // expondría POST /api/auth/sign-up/email y saltaría ese flujo.
+    disableSignUp: true,
     // Ninguna cuenta puede iniciar sesión hasta confirmar su correo.
     requireEmailVerification: true,
     autoSignIn: false,
@@ -117,5 +122,24 @@ export const auth = betterAuth({
     // `baseURL` es canónica y en producción se exige HTTPS arriba.
     secure: baseURL.startsWith("https://"),
     sameSite: "lax",
+  },
+  advanced: {
+    // Vercel escribe `x-real-ip` y no deja que el cliente lo falsifique.
+    ipAddress: {
+      ipAddressHeaders: ["x-real-ip", "x-forwarded-for"],
+    },
+    database: {
+      // Durante `next build` no hay base de datos disponible: validar el
+      // esquema solo generaría errores ruidosos en CI. En ejecución sigue
+      // activo para detectar migraciones pendientes cuanto antes.
+      validateSchema: process.env.NEXT_PHASE !== "phase-production-build",
+    },
+  },
+  rateLimit: {
+    // El almacenamiento por defecto es memoria del proceso: en serverless cada
+    // instancia tendría su propio contador. `auth_rate_limit` ya existe y su
+    // `insert ... on conflict` es atómico, así que se comparte entre instancias.
+    enabled: process.env.NODE_ENV === "production",
+    customStorage: { consume: consumeRateLimit },
   },
 });

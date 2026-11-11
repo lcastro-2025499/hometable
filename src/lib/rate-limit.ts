@@ -68,3 +68,45 @@ export async function checkRateLimit(
 
   return { allowed: true };
 }
+
+/**
+ * Adaptador de rate limit para Better Auth. Better Auth exige que la
+ * comprobación y el incremento ocurran en una sola operación atómica; el
+ * `insert ... on conflict` de Postgres cumple esa garantía y comparte el
+ * contador entre todas las instancias serverless (el almacenamiento en memoria
+ * de Better Auth no lo hacía).
+ */
+export async function consumeRateLimit(
+  key: string,
+  rule: { window: number; max: number },
+): Promise<{ allowed: boolean; retryAfter: number | null }> {
+  const safeKey = `better-auth:${key}`.slice(0, 200);
+
+  const { rows } = await pool.query<{ count: number; elapsed: number }>(
+    `insert into public.auth_rate_limit as r (key, window_started_at, count)
+     values ($1, now(), 1)
+     on conflict (key) do update set
+       count = case
+         when r.window_started_at < now() - make_interval(secs => $2) then 1
+         else r.count + 1
+       end,
+       window_started_at = case
+         when r.window_started_at < now() - make_interval(secs => $2) then now()
+         else r.window_started_at
+       end
+     returning count, extract(epoch from (now() - window_started_at))::int as elapsed`,
+    [safeKey, rule.window],
+  );
+
+  const row = rows[0];
+  if (!row) return { allowed: true, retryAfter: null };
+
+  if (row.count > rule.max) {
+    return {
+      allowed: false,
+      retryAfter: Math.max(1, rule.window - row.elapsed),
+    };
+  }
+
+  return { allowed: true, retryAfter: null };
+}
