@@ -181,12 +181,6 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.119.0
         version: 2.119.0
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-      '@types/react-google-recaptcha':
-        specifier: ^2.1.9
-        version: 2.1.9
       better-auth:
         specifier: ^1.7.18
         version: 1.7.18(next@16.4.3(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@20.19.43)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(pg@8.23.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -235,9 +229,6 @@ importers:
       resend:
         specifier: ^6.37.0
         version: 6.37.0
-      shadcn:
-        specifier: ^4.22.1
-        version: 4.22.1(supports-color@7.2.0)
       sonner:
         specifier: ^2.0.8
         version: 2.0.8(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -257,18 +248,27 @@ importers:
       '@types/node':
         specifier: ^20
         version: 20.19.43
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
       '@types/react':
         specifier: ^19
         version: 19.3.0
       '@types/react-dom':
         specifier: ^19
         version: 19.3.0(@types/react@19.3.0)
+      '@types/react-google-recaptcha':
+        specifier: ^2.1.9
+        version: 2.1.9
       eslint:
         specifier: ^9
         version: 9.39.5(jiti@2.7.0)(supports-color@7.2.0)
       eslint-config-next:
         specifier: 16.4.3
         version: 16.4.3(@typescript-eslint/parser@8.72.0(eslint@9.39.5(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+      shadcn:
+        specifier: ^4.22.1
+        version: 4.22.1(supports-color@7.2.0)
       tailwindcss:
         specifier: ^4
         version: 4.3.3
