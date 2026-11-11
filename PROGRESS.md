@@ -4,10 +4,10 @@
 autenticado, endurecimiento de seguridad y auditoría de reproducibilidad,
 pruebas y CI.
 
-**Estado:** implementación terminada y desplegada en producción; QA manual
-verificado con dos dispositivos el 11/11/2026. La auditoría posterior dejó las
-migraciones reproducibles, 46 pruebas Vitest y CI en verde. `master` permanece
-desplegable en Vercel.
+**Estado:** implementación terminada, publicada en `origin/master` y desplegada
+en producción; QA manual verificado con dos dispositivos el 11/11/2026. La
+auditoría posterior dejó las migraciones reproducibles, 46 pruebas Vitest, CI y
+el deployment `dpl_9ydsgmLkoXeDpV4owR2hMcFqBaQZ` en verde.
 
 ## Objetivo
 
@@ -128,6 +128,25 @@ desplegable en Vercel.
 - [x] Policy verificada como `authenticated` con `request.jwt.claims`
   simulado: solo devuelve las filas del `sub`.
 
+### Despliegue de la auditoría (12/11/2026)
+
+- [x] `master` publicado en `origin`: `243f748..b26c48e` y después
+  `b26c48e..1b7f349`.
+- [x] Primer deployment (`dpl_scqqFUwr7i4njvetnXS6refgcSJV`) falló en
+  `pnpm install` con `ERR_PNPM_IGNORED_BUILDS` por el postinstall de `esbuild`.
+- [x] Corregido con `allowBuilds.esbuild: true` y Node `22.x`; CI de GitHub
+  Actions en verde (`43121416108`, 56 s).
+- [x] Deployment `dpl_9ydsgmLkoXeDpV4owR2hMcFqBaQZ` (`1b7f349`) en `READY`,
+  sirviendo `hometable.luuiscastro.me` y los alias de Vercel.
+- [x] `GET /` → `307` a `/login`; `/login` y `/register` → `200`.
+- [x] CSP con nonce distinto por petición, `strict-dynamic`, reCAPTCHA y
+  `wss://*.supabase.co`; HSTS, `nosniff` y `X-Frame-Options` presentes.
+- [x] `/api/tasks` y `/api/realtime/token` → `401` sin sesión.
+- [x] `/api/auth/sign-up/email` → `400 EMAIL_PASSWORD_SIGN_UP_DISABLED`.
+- [x] Login con credenciales falsas → `401 INVALID_EMAIL_OR_PASSWORD`, lo que
+  confirma la conexión a Postgres a través del pooler.
+- [x] Sin errores de runtime en la ventana consultada.
+
 ### Dominio propio
 
 - [x] `hometable.luuiscastro.me` verificado en Vercel (CNAME a Vercel y TLS
@@ -183,6 +202,10 @@ desplegable en Vercel.
   y build usando variables ficticias.
 - [x] Constitución v3.0.0, especificaciones 300 y 400 reescritas, `README.md`,
   `.env.example` y este registro actualizados.
+- [x] Corregido el primer deployment de la auditoría: Vitest añadió `esbuild` y
+  pnpm 12 fallaba con `ERR_PNPM_IGNORED_BUILDS` porque su postinstall no estaba
+  aprobado. Se añadió `esbuild: true` a `allowBuilds` y se fijó
+  `"node": "22.x"` para que Vercel no resolviera Node 26.
 
 ## QA manual verificado
 
@@ -210,12 +233,12 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 
 ## Límites conocidos
 
-- Los commits de la auditoría aún no se han publicado; `master` local está por
-  delante de `origin` hasta que se haga push y Vercel despliegue.
 - Preview no tiene `BETTER_AUTH_URL`, así que un deployment de preview arranca
   pero falla en el primer request de autenticación.
 - `NEXT_PUBLIC_APP_URL` sigue en Vercel sin uso en el código: pendiente de
   borrar a mano en el dashboard.
+- Vercel mantiene Node 24 en la configuración del proyecto; `engines: "22.x"`
+  fuerza Node 22 en cada build y solo genera un aviso informativo.
 
 ## Commits de la sesión
 
@@ -260,3 +283,4 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 36. `897bdef` docs: rewrite the sync and Realtime specification
 37. `436d11f` docs: rewrite the Better Auth specification
 38. `a1e95ef` docs: refresh the README for the current architecture
+39. `1b7f349` build: allow esbuild install scripts and pin Node 22
