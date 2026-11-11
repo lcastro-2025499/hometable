@@ -3,9 +3,9 @@
 **Sesión:** migración a servidor como fuente única de verdad, Realtime
 autenticado y endurecimiento de seguridad.
 
-**Estado:** implementación terminada y compilación en verde. Queda pendiente el
-QA manual en navegador con dos dispositivos y la configuración de
-`SUPABASE_JWT_SECRET` en los entornos desplegados.
+**Estado:** implementación terminada, desplegada en producción y QA manual
+verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
+`origin` y desplegable en Vercel.
 
 ## Objetivo
 
@@ -95,22 +95,61 @@ QA manual en navegador con dos dispositivos y la configuración de
 - [x] Migraciones aplicadas en el proyecto Supabase conectado:
   `realtime_owner_read`, `auth_rate_limit` y `tasks_owner_indexes`.
 - [x] Comprobación SQL del estado de Realtime y de los índices.
+- [x] Migración `harden_policy_and_function`: policy de Realtime con
+  `auth.jwt()` en subconsulta y trigger `update_updated_at_column` con
+  `search_path = ''` y `pg_catalog.now()`.
+- [x] Advisors de Supabase sin avisos `WARN`: sin `auth_rls_initplan` ni
+  `function_search_path_mutable`.
 
-## QA manual pendiente
+### Despliegue y producción
 
-Requiere navegador y, para Realtime, `SUPABASE_JWT_SECRET` en `.env.local` y en
-Vercel (Production, Preview y Development).
+- [x] `master` publicado en `origin`; Vercel desplegó `c443caa`
+  (`dpl_5fAKtXtYCKSF97A8wvpJAupnbtMP`, READY) con los alias
+  `hometable-tasks.vercel.app` y `hometable-tasks-git-master-deepsitos1.vercel.app`.
+- [x] Variables en Vercel: `BETTER_AUTH_URL` y `SUPABASE_JWT_SECRET`
+  (Production y Development; el secreto como `sensitive`), además de las ya
+  existentes.
+- [x] `SUPABASE_JWT_SECRET` local validado contra PostgREST (200 con el JWT
+  firmado, 401 con un secreto inválido) y contra Realtime (`SUBSCRIBED`).
+- [x] Smoke test con `curl` sobre producción: `/login` 200 con CSP, HSTS,
+  `nosniff` y `X-Frame-Options`; `/` 307 a `/login` con las mismas cabeceras;
+  `/api/tasks` y `/api/realtime/token` 401; `/api/auth/ok` 200.
+- [x] `POST /api/auth/sign-in/email` con credenciales falsas responde 401
+  `INVALID_EMAIL_OR_PASSWORD`: Better Auth consulta Postgres a través del
+  pooler y descarta los antiguos `Connection terminated due to connection timeout`.
+- [x] Sin errores de runtime en el deployment nuevo.
+- [x] Policy verificada como `authenticated` con `request.jwt.claims`
+  simulado: solo devuelve las filas del `sub`.
 
-1. Registrar una cuenta, recibir el OTP, verificar e iniciar sesión.
-2. Abrir la misma cuenta en dos dispositivos o ventanas.
-3. Crear, editar, mover y borrar tareas en una ventana y comprobar que la otra
-   recibe los cambios por WebSocket.
-4. Confirmar que las escrituras siguen funcionando con Realtime deshabilitado
-   (sondeo cada 30 s).
-5. Comprobar que el registro y el reenvío no revelan si un correo existe.
-6. Confirmar que una cuenta no puede leer ni modificar tareas de otra.
-7. Revisar las cabeceras de seguridad y que la CSP no bloquee reCAPTCHA ni el
-   WebSocket.
+## QA manual verificado
+
+Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
+
+1. [x] Registro, OTP por correo y verificación.
+2. [x] Inicio de sesión con la misma cuenta en dos ventanas.
+3. [x] Crear, editar, mover y borrar tareas: los cambios llegan por WebSocket.
+4. [x] Escrituras correctas con Realtime deshabilitado (sondeo cada 30 s).
+5. [x] Registro y reenvío sin revelar si un correo existe.
+6. [x] Aislamiento entre cuentas: no se leen ni modifican tareas ajenas.
+7. [x] Cabeceras de seguridad y CSP sin bloquear reCAPTCHA ni el WebSocket.
+
+## Avisos de advisors
+
+- `auth_rls_initplan` y `function_search_path_mutable`: resueltos en
+  `20261112030000_harden_policy_and_function.sql`.
+- `rls_enabled_no_policy` (7 tablas de auth y servidor): intencionado. RLS
+  activo sin policies y sin grants equivale a denegar a `anon` y
+  `authenticated`; el acceso es solo server-side por `DATABASE_URL`.
+- `unindexed_foreign_keys` y `unused_index`: `public.board` está vacía y
+  reservada para un futuro multi-tablero; los índices por dueño aún no tienen
+  tráfico que los marque como usados.
+
+## Límites conocidos
+
+- Preview no tiene `BETTER_AUTH_URL`, así que un deployment de preview arranca
+  pero falla en el primer request de autenticación.
+- `NEXT_PUBLIC_APP_URL` sigue en Vercel sin uso en el código: pendiente de
+  borrar a mano en el dashboard.
 
 ## Commits de la sesión
 
@@ -133,3 +172,6 @@ Vercel (Production, Preview y Development).
 17. `a2f4a97` docs: update agent rules for the server-first model
 18. `82bf4cd` fix(ui): update the app description
 19. `7299714` refactor(tasks): reuse the shared request helpers
+20. `5c71676` docs: complete the session commit list
+21. `c443caa` fix(realtime): retry when the token cannot be issued
+22. `5acb9c7` fix(db): harden realtime policy and trigger search_path
