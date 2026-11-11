@@ -1,4 +1,16 @@
-import { Pool } from "pg";
+import { Pool, types } from "pg";
+
+/**
+ * Las columnas `date` (por ejemplo `tasks.due_date`) representan un día sin
+ * hora. Por defecto el driver las convierte a `Date` y, al serializarlas,
+ * acaban como `2026-11-28T06:00:00.000Z`, que ya no encaja con el formato
+ * `YYYY-MM-DD` que usa la aplicación. Devolverlas como texto evita esa
+ * conversión y cualquier desfase de zona horaria.
+ *
+ * Los tipos `timestamp`/`timestamptz` no se tocan: esos sí son instantes y se
+ * serializan como ISO.
+ */
+types.setTypeParser(types.builtins.DATE, (value: string) => value);
 
 /**
  * Pool único de PostgreSQL para todo el servidor (Better Auth y rutas de

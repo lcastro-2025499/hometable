@@ -1,8 +1,22 @@
-import { isTaskPriority, isTaskStatus } from "./task-utils";
+import { isTaskPriority, isTaskStatus, toDateOnly } from "./task-utils";
 import type { Database } from "./types/supabase";
 import type { Task } from "./types";
 
 export type TaskRow = Database["public"]["Tables"]["tasks"]["Row"] & { owner_id?: string | null };
+
+/**
+ * `date` debe viajar siempre como `YYYY-MM-DD`. El pool ya devuelve texto, pero
+ * Realtime y cualquier consulta futura podrían entregar un `Date`, así que se
+ * normaliza aquí para no depender del driver.
+ */
+function normalizeDueDate(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (value instanceof Date) return toDateOnly(value);
+  if (typeof value !== "string") return undefined;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : undefined;
+}
 
 export function rowToTask(row: TaskRow): Task {
   return {
@@ -11,7 +25,7 @@ export function rowToTask(row: TaskRow): Task {
     description: row.description ?? undefined,
     status: isTaskStatus(row.status) ? row.status : "todo",
     priority: isTaskPriority(row.priority) ? row.priority : "low",
-    dueDate: row.due_date ?? undefined,
+    dueDate: normalizeDueDate(row.due_date),
     tags: row.tags ?? [],
     order: row.order,
     createdAt: row.created_at,
