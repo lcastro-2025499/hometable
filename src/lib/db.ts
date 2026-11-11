@@ -23,22 +23,49 @@ types.setTypeParser(types.builtins.DATE, (value: string) => value);
  * nueva por petición.
  */
 
-const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL;
+/**
+ * En producción no hay respaldo silencioso: si falta `DATABASE_URL` no se usa
+ * `DIRECT_URL`. Caer a la conexión directa (puerto 5432) desde funciones
+ * serverless agota las conexiones del proyecto y enmascara un despliegue mal
+ * configurado. En local se acepta `DIRECT_URL` para trabajar sin pooler.
+ */
+const isProduction = process.env.NODE_ENV === "production";
+const connectionString = isProduction
+  ? process.env.DATABASE_URL
+  : process.env.DATABASE_URL || process.env.DIRECT_URL;
 
-/** Solo los hosts de Supabase necesitan TLS con su CA interna. */
-function needsSsl(value?: string): boolean {
+function isSupabaseHost(hostname: string): boolean {
+  return (
+    hostname.endsWith(".supabase.co") ||
+    hostname.endsWith(".supabase.com") ||
+    hostname.endsWith(".supabase.net")
+  );
+}
+
+/**
+ * TLS de Postgres. Supabase usa una CA interna (también en el pooler), así que
+ * la validación de cadena falla con `SELF_SIGNED_CERT_IN_CHAIN`. Si se
+ * proporciona `SUPABASE_DB_CA_CERT` se valida contra ella; si no, se mantiene
+ * el comportamiento histórico (cifrado sin validar la cadena) para no romper
+ * la conexión. Descarga la CA en Supabase → Project Settings → Database →
+ * SSL Configuration y guárdala en esa variable para validación completa.
+ */
+function sslConfig(value?: string): false | { ca?: string; rejectUnauthorized: boolean } {
   if (!value) return false;
 
+  let hostname: string;
   try {
-    const { hostname } = new URL(value);
-    return (
-      hostname.endsWith(".supabase.co") ||
-      hostname.endsWith(".supabase.com") ||
-      hostname.endsWith(".supabase.net")
-    );
+    hostname = new URL(value).hostname;
   } catch {
     return false;
   }
+
+  if (!isSupabaseHost(hostname)) return false;
+
+  const ca = process.env.SUPABASE_DB_CA_CERT?.replace(/\\n/g, "\n").trim();
+  if (ca) return { ca, rejectUnauthorized: true };
+
+  return { rejectUnauthorized: false };
 }
 
 const globalForDb = globalThis as unknown as { hometablePool?: Pool };
@@ -47,8 +74,8 @@ export const pool =
   globalForDb.hometablePool ??
   new Pool({
     connectionString,
-    ssl: needsSsl(connectionString) ? { rejectUnauthorized: false } : false,
-    max: process.env.NODE_ENV === "production" ? 3 : 10,
+    ssl: sslConfig(connectionString),
+    max: isProduction ? 3 : 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
