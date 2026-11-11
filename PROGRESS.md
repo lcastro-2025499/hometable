@@ -133,6 +133,15 @@ verificado con dos dispositivos el 11/11/2026. `master` está sincronizado con
   403 `INVALID_ORIGIN`) y un origen ajeno sigue rechazado con 403.
 - [x] Dominio añadido a la allowlist de reCAPTCHA.
 
+### Correcciones posteriores
+
+- [x] Fechas límite: el driver devolvía las columnas `date` como `Date` y el
+  JSON llegaba al navegador como `2026-11-28T06:00:00.000Z`, que la UI no podía
+  interpretar; la fecha desaparecía al recargar o tras el sondeo de 30 s y la
+  tarea se descartaba al reeditarla. El pool devuelve ahora `date` como texto
+  `YYYY-MM-DD` y `rowToTask` normaliza cualquier valor que llegue.
+- [x] Commit `29c827d` desplegado en producción.
+
 ## QA manual verificado
 
 Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
@@ -188,3 +197,4 @@ Ejecutado el 11/11/2026 con dos dispositivos sobre el deployment de producción:
 21. `c443caa` fix(realtime): retry when the token cannot be issued
 22. `5acb9c7` fix(db): harden realtime policy and trigger search_path
 23. `32f461d` feat(auth): accept extra trusted origins
+24. `29c827d` fix(tasks): keep due dates as date-only strings
